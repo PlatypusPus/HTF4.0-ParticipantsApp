@@ -26,6 +26,27 @@ import CheckinMonitorScreen from './screens/admin/CheckinMonitorScreen'
 
 // ─── Route guards ────────────────────────────────────────────────────────────
 
+function MissingProfileScreen() {
+  const { signOut } = useAuth()
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-5">
+      <div className="w-full max-w-md bg-surface border-4 border-black p-7 rounded-3xl drop-block">
+        <h1 className="font-headline font-black text-2xl uppercase italic">Profile Not Found</h1>
+        <p className="font-body font-bold text-sm text-on-surface-variant mt-2">
+          Your team profile is missing. Ask an organizer to seed your team account, then log in again.
+        </p>
+        <button
+          onClick={signOut}
+          className="mt-5 w-full bg-primary-container text-on-primary-container border-4 border-black py-3 font-headline font-black text-base uppercase italic rounded-2xl drop-block active:scale-95"
+        >
+          Sign Out
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Guard({ children, adminOnly = false, volunteerOnly = false, participantOnly = false }) {
   const { user, loading, isAdmin, profile } = useAuth()
 
@@ -38,6 +59,7 @@ function Guard({ children, adminOnly = false, volunteerOnly = false, participant
   }
 
   if (!user) return <Navigate to="/auth" replace />
+  if (!profile) return <MissingProfileScreen />
   if (adminOnly && !isAdmin) return <Navigate to="/home" replace />
   if (participantOnly && profile?.role === 'volunteer') return <Navigate to="/volunteer" replace />
   if (volunteerOnly && profile?.role !== 'volunteer') {
@@ -51,6 +73,10 @@ function Guard({ children, adminOnly = false, volunteerOnly = false, participant
 
 function AppRoutes() {
   const { user, loading, profile } = useAuth()
+
+  if (!loading && user && !profile) {
+    return <MissingProfileScreen />
+  }
 
   const defaultPath = user
     ? profile?.role === 'admin'

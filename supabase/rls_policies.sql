@@ -24,16 +24,15 @@ create policy "profiles: admin read all"
   on public.profiles for select
   using (public.my_role() = 'admin');
 
-create policy "profiles: volunteer read all"
-  on public.profiles for select
-  using (public.my_role() = 'volunteer');
-
 create policy "profiles: own update"
   on public.profiles for update
   using (auth.uid() = id)
   with check (
     -- Prevent self-escalation of role
     role = (select role from public.profiles where id = auth.uid())
+    -- Keep identity fields immutable for non-admin self-updates
+    and team_code = (select team_code from public.profiles where id = auth.uid())
+    and team_name = (select team_name from public.profiles where id = auth.uid())
   );
 
 create policy "profiles: admin update all"

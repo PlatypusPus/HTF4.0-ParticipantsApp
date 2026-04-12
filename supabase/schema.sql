@@ -5,6 +5,7 @@
 
 -- Extensions
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 -- =============================================================
 -- PROFILES (extends auth.users — one per team/volunteer)
