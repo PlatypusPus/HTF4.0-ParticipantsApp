@@ -1,4 +1,7 @@
 services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # web — React/Vite bundle served by nginx (stateless, port 80 internal only)
+  # ──────────────────────────────────────────────────────────────────────────
   web:
     build:
       context: .
@@ -11,15 +14,40 @@ services:
         VITE_SPOTIFY_CLIENT_ID:     ${VITE_SPOTIFY_CLIENT_ID}
         VITE_SPOTIFY_CLIENT_SECRET: ${VITE_SPOTIFY_CLIENT_SECRET}
     image: htf4-volunteer:latest
-    container_name: htf4-volunteer
+    container_name: htf4-volunteer-web
     restart: unless-stopped
-    ports:
-      # host:container — change the left side to 80 if exposing directly,
-      # or keep 8080 and put Caddy/Nginx/Traefik in front for TLS.
-      - "8080:80"
+    expose:
+      - "80"        # reachable only from caddy on the internal network
     healthcheck:
       test: ["CMD", "wget", "-qO-", "--tries=1", "--spider", "http://localhost/"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # caddy — terminates TLS, auto-provisions Let's Encrypt certs, reverse
+  # proxies to `web`. Needs DOMAIN + EMAIL in .env. Ports 80 + 443 must be
+  # reachable from the public internet for the ACME challenge to succeed.
+  # ──────────────────────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: htf4-volunteer-caddy
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"      # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN}
+      EMAIL:  ${EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data   # certs live here — DO NOT delete this volume
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

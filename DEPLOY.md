@@ -1,90 +1,92 @@
 # Deploying to a VPS
 
-The app is a static React/Vite bundle served by nginx inside a container. All
-application state lives in Supabase — the container itself is stateless and
-can be rebuilt / scaled freely.
+The stack is two containers:
+- **web** — static React/Vite bundle served by nginx (internal only)
+- **caddy** — terminates HTTPS with auto-provisioned Let's Encrypt certs, reverse proxies to `web`
 
-## 1. Prerequisites on the VPS
+All application state lives in Supabase, so the containers are stateless apart from Caddy's cert volume.
 
-```bash
-# Docker + Compose (Ubuntu/Debian)
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER   # log out/in after this
-```
+## 1. Prerequisites
 
-## 2. Supply environment variables
+- **A domain name** pointing at your VPS's public IP (A/AAAA record). Let's Encrypt cannot issue certificates for raw IPs. Free option: `duckdns.org`.
+- **Ports 80 and 443** open on the VPS firewall — both are required (80 for the HTTP-01 ACME challenge, 443 for HTTPS).
+- Docker + Compose:
+  ```bash
+  curl -fsSL https://get.docker.com | sh
+  sudo usermod -aG docker $USER   # log out/in after this
+  ```
 
-Create a `.env` file next to `docker-compose.yml` (copy from `.env.example`):
+## 2. Configure `.env`
+
+Copy `.env.example` → `.env` next to `docker-compose.yml` and fill in:
 
 ```env
+# Domain + Let's Encrypt contact
+DOMAIN=htf4.yourdomain.com
+EMAIL=you@yourdomain.com
+
+# Supabase
 VITE_SUPABASE_URL=https://xxxxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGciOi...
+
+# Spotify
 VITE_SPOTIFY_CLIENT_ID=...
 VITE_SPOTIFY_CLIENT_SECRET=...
 ```
 
-> ⚠ **Build-time, not runtime.** Vite inlines `VITE_*` variables into the JS
-> bundle during `vite build`. Changing `.env` requires rebuilding the image
-> (`docker compose build --no-cache`). Secrets end up in the browser — never
-> put anything truly secret here; use Supabase Edge Functions instead.
+> ⚠ **Vite vars are build-time.** Changing any `VITE_*` value requires a rebuild: `docker compose build --no-cache && docker compose up -d`.
 
 ## 3. Build and run
 
 ```bash
 git clone <your-repo> && cd "Participants APP"
 docker compose up -d --build
+docker compose logs -f caddy    # watch Caddy acquire the cert
 ```
 
-The app now serves on `http://<vps-ip>:8080`.
+On first run, Caddy solves the HTTP-01 challenge and installs a certificate. You should see a line like `certificate obtained successfully` in the logs within 10–30 seconds.
 
-## 4. Put HTTPS in front
+The app is now live at **`https://<DOMAIN>`**. Plain HTTP requests to port 80 are automatically redirected to HTTPS by Caddy.
 
-Expose the container on localhost only and let Caddy handle TLS:
-
-**`docker-compose.yml`** — change `"8080:80"` to `"127.0.0.1:8080:80"`.
-
-**`/etc/caddy/Caddyfile`**:
-```caddy
-htf4.yourdomain.com {
-    reverse_proxy 127.0.0.1:8080
-}
-```
-
-Caddy auto-provisions a Let's Encrypt certificate on reload:
-```bash
-sudo systemctl reload caddy
-```
-
-## 5. Update Spotify + Supabase after domain change
-
-Once the app is live at `https://htf4.yourdomain.com`:
+## 4. Update Spotify + Supabase for the new origin
 
 1. **Spotify Dashboard → your app → Redirect URIs** — add:
-   `https://htf4.yourdomain.com/volunteer/spotify-callback`
+   `https://<DOMAIN>/volunteer/spotify-callback`
 2. **Supabase Dashboard → Authentication → URL Configuration**:
-   - Site URL: `https://htf4.yourdomain.com`
-   - Redirect URLs: `https://htf4.yourdomain.com/**`
+   - Site URL: `https://<DOMAIN>`
+   - Redirect URLs: `https://<DOMAIN>/**`
 
-## 6. Updating
+## 5. Run the meal/NFC migration once
+
+In Supabase Dashboard → SQL Editor, paste and run the contents of `supabase/meals_migration.sql`.
+
+## 6. Updating the app
 
 ```bash
 git pull
 docker compose up -d --build
+docker image prune -f
 ```
 
-Old image layers can be pruned with `docker image prune -f`.
+Caddy keeps running throughout — only the `web` container restarts.
 
-## 7. Running the meal/NFC migration once
+## Troubleshooting
 
-First-time only — in Supabase Dashboard → SQL Editor, paste and run the
-contents of `supabase/meals_migration.sql`.
+**Cert not issuing.** Check `docker compose logs caddy`:
+- `no such host` → DNS isn't pointing at the VPS yet. Wait for propagation.
+- `connection refused` / `timeout` → port 80 is blocked. Open it in the VPS firewall (`ufw allow 80,443/tcp`) and any cloud-provider security group.
+- Testing DNS / cert config without burning rate limits: uncomment the `acme_ca` staging line in `Caddyfile`, then re-comment once it works and run `docker compose restart caddy`.
 
-## Commands cheat-sheet
+**NFC still not working after HTTPS.** Hard-refresh the page on your phone (clear cache), then open the Meals tab. The diagnostic card will print a specific reason code if NFC is still blocked.
+
+## Cheat sheet
 
 ```bash
-docker compose logs -f web      # tail logs
-docker compose restart web      # restart without rebuild
-docker compose down             # stop + remove container
-docker compose build --no-cache # force a clean rebuild
-docker exec -it htf4-volunteer sh   # shell into container
+docker compose logs -f web          # tail app logs
+docker compose logs -f caddy        # tail proxy / TLS logs
+docker compose restart web          # restart app without rebuild
+docker compose down                 # stop everything
+docker compose build --no-cache     # force clean rebuild
+docker exec -it htf4-volunteer-web sh    # shell into app container
+docker exec -it htf4-volunteer-caddy sh  # shell into caddy
 ```

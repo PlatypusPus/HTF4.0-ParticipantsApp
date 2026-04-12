@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# HTF4 Volunteer App — Caddy reverse proxy with automatic HTTPS
+# DOMAIN and EMAIL are injected from docker-compose.yml (read from .env)
+# ──────────────────────────────────────────────────────────────────────────────
+
+{
+    email {$EMAIL}
+    # For Let's Encrypt staging during setup, uncomment:
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+    encode gzip zstd
+
+    # HSTS — force HTTPS for 1 year (enables preload eligibility)
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        Permissions-Policy        "geolocation=(self), camera=(self), microphone=()"
+        # Remove server identification
+        -Server
+    }
+
+    reverse_proxy web:80 {
+        # Preserve original host/scheme so the app sees the public URL
+        header_up X-Forwarded-Proto https
+        header_up X-Real-IP {remote_host}
+    }
+
+    # Log requests (optional — comment out for quieter logs)
+    log {
+        output stdout
+        format console
+    }
+}
