@@ -2,31 +2,34 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import LoadingSpinner from '../../components/ui/LoadingSpinner'
 
-export default function AdminDashboard() {
+export default function VolunteerDashboard() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const loadStats = useCallback(async () => {
+    const today = new Date().toISOString().slice(0, 10)
     const [
       { count: checkins },
       { count: queueLen },
       { count: pendingHelp },
       { count: flagged },
+      { count: mealsToday },
     ] = await Promise.all([
       supabase.from('checkins').select('*', { count: 'exact', head: true }),
       supabase.from('song_queue').select('*', { count: 'exact', head: true }).eq('is_played', false),
       supabase.from('help_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('media_items').select('*', { count: 'exact', head: true }).eq('is_flagged', true),
+      supabase.from('meal_records').select('*', { count: 'exact', head: true }).eq('meal_date', today),
     ])
-    setStats({ checkins, queueLen, pendingHelp, flagged })
+    setStats({ checkins, queueLen, pendingHelp, flagged, mealsToday })
     setLoading(false)
   }, [])
 
   useEffect(() => {
     loadStats()
-    const tables = ['checkins', 'song_queue', 'help_requests', 'media_items']
+    const tables = ['checkins', 'song_queue', 'help_requests', 'media_items', 'meal_records']
     const channels = tables.map(t =>
-      supabase.channel(`admin_stats_${t}`)
+      supabase.channel(`volunteer_stats_${t}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: t }, loadStats)
         .subscribe()
     )
@@ -34,8 +37,9 @@ export default function AdminDashboard() {
   }, [loadStats])
 
   const CARDS = [
-    { key: 'checkins',    label: 'Checked In',    icon: '✓', bg: 'bg-primary-container',  text: 'text-on-primary-container',  alert: false },
-    { key: 'queueLen',    label: 'Songs in Queue', icon: '♫', bg: 'bg-tertiary-container', text: 'text-on-tertiary-container', alert: false },
+    { key: 'checkins',    label: 'Checked In',     icon: '✓', bg: 'bg-primary-container',  text: 'text-on-primary-container',  alert: false },
+    { key: 'mealsToday',  label: 'Meals Served',   icon: '🍽', bg: 'bg-tertiary-container', text: 'text-on-tertiary-container', alert: false },
+    { key: 'queueLen',    label: 'Songs in Queue', icon: '♫', bg: 'bg-surface-variant',    text: 'text-on-surface',            alert: false },
     { key: 'pendingHelp', label: 'Pending Help',   icon: '!', bg: null, text: null, alert: true  },
     { key: 'flagged',     label: 'Flagged Media',  icon: '⚑', bg: null, text: null, alert: true  },
   ]
@@ -45,7 +49,7 @@ export default function AdminDashboard() {
   return (
     <div>
       <h1 className="font-headline font-black text-3xl uppercase italic mb-6 text-white">Overview</h1>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
         {CARDS.map(c => {
           const val = stats?.[c.key] ?? 0
           const alert = c.alert && val > 0
@@ -64,10 +68,11 @@ export default function AdminDashboard() {
       <div className="bg-surface border-4 border-black p-5 drop-block rounded-3xl">
         <h2 className="font-headline font-black text-lg uppercase italic mb-2 text-black">Quick Notes</h2>
         <ul className="font-body font-bold text-sm text-on-surface-variant space-y-1">
+          <li>• Use the <span className="text-on-surface">Meals</span> tab to scan NFC wristbands for breakfast, lunch, and dinner</li>
           <li>• Use the <span className="text-on-surface">Queue</span> tab to control playback</li>
           <li>• <span className="text-error">Red</span> stat cards require immediate attention</li>
-          <li>• All counts update in real-time via Supabase Realtime</li>
-          <li>• Set a user&apos;s <code className="bg-surface-container px-1 rounded">role = admin</code> in the profiles table to grant access</li>
+          <li>• All counts update in real-time across every logged-in volunteer</li>
+          <li>• Set a user&apos;s <code className="bg-surface-container px-1 rounded">role = volunteer</code> in the profiles table to grant access</li>
         </ul>
       </div>
     </div>

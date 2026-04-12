@@ -1,5 +1,5 @@
 // Spotify PKCE OAuth + token storage for the Web Playback SDK
-// The admin must have a Spotify Premium account to use playback.
+// The volunteer must have a Spotify Premium account to use playback.
 
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID
 const SCOPES = 'streaming user-read-email user-read-private'
@@ -12,7 +12,7 @@ const K = {
 }
 
 export function getRedirectUri() {
-  return `${window.location.origin}/admin/spotify-callback`
+  return `${window.location.origin}/volunteer/spotify-callback`
 }
 
 // ─── PKCE helpers ─────────────────────────────────────────────────────────────

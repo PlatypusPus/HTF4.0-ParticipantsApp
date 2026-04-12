@@ -1,0 +1,25 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Vite bakes these into the bundle at BUILD time. Supply values via
+        # a `.env` file next to this compose file (see .env.example).
+        VITE_SUPABASE_URL:          ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY:     ${VITE_SUPABASE_ANON_KEY}
+        VITE_SPOTIFY_CLIENT_ID:     ${VITE_SPOTIFY_CLIENT_ID}
+        VITE_SPOTIFY_CLIENT_SECRET: ${VITE_SPOTIFY_CLIENT_SECRET}
+    image: htf4-volunteer:latest
+    container_name: htf4-volunteer
+    restart: unless-stopped
+    ports:
+      # host:container — change the left side to 80 if exposing directly,
+      # or keep 8080 and put Caddy/Nginx/Traefik in front for TLS.
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

@@ -3,15 +3,16 @@ import { useAuth } from '../../contexts/AuthContext'
 import { SpotifyPlayerProvider } from '../../contexts/SpotifyPlayerContext'
 
 const TABS = [
-  { to: '/admin',          label: 'Overview',  icon: '⬡', end: true },
-  { to: '/admin/checkins', label: 'Check-ins', icon: '✓' },
-  { to: '/admin/queue',    label: 'Queue',     icon: '♫' },
-  { to: '/admin/media',    label: 'Media',     icon: '⬛' },
-  { to: '/admin/help',     label: 'Help',      icon: '!' },
+  { to: '/volunteer',          label: 'Overview',  icon: '⬡', end: true },
+  { to: '/volunteer/meals',    label: 'Meals',     icon: '🍽' },
+  { to: '/volunteer/checkins', label: 'Check-ins', icon: '✓' },
+  { to: '/volunteer/queue',    label: 'Queue',     icon: '♫' },
+  { to: '/volunteer/media',    label: 'Media',     icon: '⬛' },
+  { to: '/volunteer/help',     label: 'Help',      icon: '!' },
 ]
 
-export default function AdminLayout() {
-  const { signOut } = useAuth()
+export default function VolunteerLayout() {
+  const { signOut, profile } = useAuth()
   const navigate = useNavigate()
 
   return (
@@ -19,11 +20,14 @@ export default function AdminLayout() {
     <div className="min-h-screen">
       <header className="sticky top-0 bg-on-surface border-b-4 border-black z-50">
         <div className="max-w-4xl mx-auto px-4 flex items-center justify-between h-13 py-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <span className="bg-primary-container border-2 border-black px-2 py-0.5 font-headline font-black text-xs uppercase italic rounded-lg text-on-primary-container">
-              Admin
+              Volunteer
             </span>
-            <span className="font-headline font-black text-surface text-base uppercase italic">HTF4 Panel</span>
+            <span className="font-headline font-black text-surface text-base uppercase italic truncate">HTF4 Panel</span>
+            {profile?.full_name && (
+              <span className="font-body font-bold text-xs text-surface-variant truncate hidden sm:inline">· {profile.full_name}</span>
+            )}
           </div>
           <div className="flex gap-2">
             <button

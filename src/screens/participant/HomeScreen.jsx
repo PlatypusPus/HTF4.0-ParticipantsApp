@@ -38,7 +38,7 @@ const OPTIONS = [
 ]
 
 export default function HomeScreen() {
-  const { profile, isAdmin, signOut } = useAuth()
+  const { profile, isVolunteer, signOut } = useAuth()
   const navigate = useNavigate()
 
   return (
@@ -47,12 +47,12 @@ export default function HomeScreen() {
       <div className="flex items-center justify-between">
         <img src={logo} alt="HTF4" className="h-9 w-auto" />
         <div className="flex gap-2">
-          {isAdmin && (
+          {isVolunteer && (
             <button
-              onClick={() => navigate('/admin')}
+              onClick={() => navigate('/volunteer')}
               className="bg-tertiary text-white border-2 border-black px-3 py-1.5 font-headline font-black text-xs uppercase italic drop-block rounded-xl active:scale-95"
             >
-              Admin ↗
+              Volunteer ↗
             </button>
           )}
           <button

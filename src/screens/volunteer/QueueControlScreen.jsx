@@ -64,7 +64,7 @@ function PlayerCard() {
         Connect Spotify →
       </button>
       <p className="font-body text-xs text-on-surface-variant">
-        Add <code className="bg-surface-container px-1 rounded">http://localhost:5173/admin/spotify-callback</code> to your Spotify app's Redirect URIs.
+        Add <code className="bg-surface-container px-1 rounded">{window.location.origin}/volunteer/spotify-callback</code> to your Spotify app's Redirect URIs.
       </p>
     </div>
   )

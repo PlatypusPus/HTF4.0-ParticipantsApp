@@ -5,7 +5,12 @@
       "Bash(npm install:*)",
       "Bash(rm:*)",
       "Bash(grep -n \"pb-24\\\\|pt-6\\\\|px-4\\\\|max-w-\\\\[430px\\\\]\\\\|fixed\\\\|min-h-screen\" src/screens/participant/*.jsx src/components/BottomNav.jsx src/App.jsx)",
-      "Bash(grep -n \"drop-block\\\\|hover:translate\\\\|fixed inset\\\\|z-50\\\\|z-\\\\[\" src/screens/participant/*.jsx src/components/ParticipantLayout.jsx)"
+      "Bash(grep -n \"drop-block\\\\|hover:translate\\\\|fixed inset\\\\|z-50\\\\|z-\\\\[\" src/screens/participant/*.jsx src/components/ParticipantLayout.jsx)",
+      "Bash(npx eslint:*)",
+      "Bash(npx vite:*)",
+      "Bash(ls -la .env* .dockerignore Dockerfile docker-compose*)",
+      "Bash(docker --version)",
+      "Bash(docker build:*)"
     ]
   }
 }

@@ -18,7 +18,7 @@ export default function SpotifyCallbackScreen() {
     }
 
     exchangeCode(code)
-      .then(() => navigate('/admin/queue', { replace: true }))
+      .then(() => navigate('/volunteer/queue', { replace: true }))
       .catch(e  => setError(e.message))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -26,7 +26,7 @@ export default function SpotifyCallbackScreen() {
     <div className="min-h-screen flex items-center justify-center p-6 bg-background">
       <div className="bg-error-container border-4 border-error text-on-error-container p-8 rounded-3xl max-w-sm drop-block text-center">
         <p className="font-headline font-black text-xl uppercase italic mb-4">{error}</p>
-        <button onClick={() => navigate('/admin/queue')} className="font-body font-bold text-sm underline">
+        <button onClick={() => navigate('/volunteer/queue')} className="font-body font-bold text-sm underline">
           Back to Queue
         </button>
       </div>
