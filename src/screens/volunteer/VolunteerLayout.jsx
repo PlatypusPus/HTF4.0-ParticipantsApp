@@ -5,6 +5,7 @@ import { SpotifyPlayerProvider } from '../../contexts/SpotifyPlayerContext'
 const TABS = [
   { to: '/volunteer',          label: 'Overview',  icon: '⬡', end: true },
   { to: '/volunteer/meals',    label: 'Meals',     icon: '🍽' },
+  { to: '/volunteer/nfc-write', label: 'NFC Write', icon: '✎' },
   { to: '/volunteer/checkins', label: 'Check-ins', icon: '✓' },
   { to: '/volunteer/queue',    label: 'Queue',     icon: '♫' },
   { to: '/volunteer/media',    label: 'Media',     icon: '⬛' },
