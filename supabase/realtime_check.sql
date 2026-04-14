@@ -25,11 +25,6 @@ begin
   end;
 
   begin
-    alter publication supabase_realtime add table public.media_items;
-  exception when duplicate_object then null;
-  end;
-
-  begin
     alter publication supabase_realtime add table public.checkins;
   exception when duplicate_object then null;
   end;
@@ -40,5 +35,4 @@ end $$;
 alter table public.help_requests replica identity full;
 alter table public.meal_records  replica identity full;
 alter table public.song_queue    replica identity full;
-alter table public.media_items   replica identity full;
 alter table public.checkins      replica identity full;

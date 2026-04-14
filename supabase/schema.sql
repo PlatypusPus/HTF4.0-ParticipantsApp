@@ -59,26 +59,6 @@ create table if not exists public.song_queue (
 create index if not exists song_queue_played_position_idx on public.song_queue (is_played, position);
 
 -- =============================================================
--- MEDIA GALLERY
--- =============================================================
-create table if not exists public.media_items (
-  id            uuid primary key default gen_random_uuid(),
-  uploaded_by   uuid references public.profiles(id) on delete set null,
-  storage_path  text not null,
-  public_url    text not null,
-  media_type    text not null check (media_type in ('image', 'video')),
-  caption       text,
-  is_approved   boolean not null default true,
-  is_flagged    boolean not null default false,
-  flag_reason   text,
-  flagged_by    uuid references public.profiles(id) on delete set null,
-  uploaded_at   timestamptz not null default now()
-);
-
-create index if not exists media_items_approved_uploaded_idx on public.media_items (is_approved, uploaded_at desc);
-create index if not exists media_items_flagged_idx on public.media_items (is_flagged) where is_flagged = true;
-
--- =============================================================
 -- HELP REQUESTS
 -- =============================================================
 create table if not exists public.help_requests (
@@ -108,9 +88,6 @@ begin
   if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='help_requests') then
     alter publication supabase_realtime add table public.help_requests;
   end if;
-  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='media_items') then
-    alter publication supabase_realtime add table public.media_items;
-  end if;
   if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='checkins') then
     alter publication supabase_realtime add table public.checkins;
   end if;
@@ -120,11 +97,3 @@ end$$;
 -- NOTE: No auto-create trigger. Teams are pre-seeded via the
 -- seed script (supabase/seed.sql) or manually via SQL Editor.
 -- =============================================================
-
--- =============================================================
--- STORAGE BUCKET
--- Run in Supabase Dashboard → Storage → New bucket
--- Name: event-media | Public: true | File size limit: 50MB
--- Allowed types: image/*, video/*
--- =============================================================
--- insert into storage.buckets (id, name, public) values ('event-media', 'event-media', true);

@@ -20,14 +20,6 @@ const OPTIONS = [
     text: 'text-on-tertiary-container',
   },
   {
-    to: '/gallery',
-    title: 'Gallery',
-    desc: 'Share & browse event moments',
-    icon: '📸',
-    bg: 'bg-secondary-container',
-    text: 'text-on-secondary-container',
-  },
-  {
     to: '/help',
     title: 'Get Help',
     desc: 'Medical, technical or general',
@@ -95,18 +87,20 @@ export default function HomeScreen() {
       </div>
 
       {/* Option cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="flex flex-col gap-4">
         {OPTIONS.map(opt => (
           <button
             key={opt.to}
             onClick={() => navigate(opt.to)}
-            className={`relative hover:z-10 ${opt.bg} ${opt.text} border-4 border-black p-5 drop-block rounded-3xl text-left hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all active:scale-95`}
+            className={`relative hover:z-10 ${opt.bg} ${opt.text} border-4 border-black p-5 drop-block rounded-3xl text-left hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all active:scale-95 flex items-center gap-4`}
           >
-            <span className="text-3xl block mb-2">{opt.icon}</span>
-            <h2 className="font-headline font-black text-base uppercase italic tracking-tight mb-1 leading-tight">
-              {opt.title}
-            </h2>
-            <p className="font-body font-bold text-xs opacity-80 leading-snug">{opt.desc}</p>
+            <span className="text-4xl leading-none flex-shrink-0">{opt.icon}</span>
+            <div className="min-w-0">
+              <h2 className="font-headline font-black text-lg uppercase italic tracking-tight leading-tight">
+                {opt.title}
+              </h2>
+              <p className="font-body font-bold text-xs opacity-80 leading-snug">{opt.desc}</p>
+            </div>
           </button>
         ))}
       </div>

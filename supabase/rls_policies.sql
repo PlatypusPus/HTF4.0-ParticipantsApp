@@ -94,45 +94,6 @@ create policy "queue: admin delete"
   using (public.my_role() = 'admin');
 
 -- =============================================================
--- MEDIA ITEMS
--- =============================================================
-alter table public.media_items enable row level security;
-
-create policy "media: view approved"
-  on public.media_items for select
-  using (auth.role() = 'authenticated' and is_approved = true);
-
-create policy "media: admin view all"
-  on public.media_items for select
-  using (public.my_role() = 'admin');
-
-create policy "media: participant upload"
-  on public.media_items for insert
-  with check (
-    auth.role() = 'authenticated'
-    and auth.uid() = uploaded_by
-  );
-
-create policy "media: participant flag own or others"
-  on public.media_items for update
-  using (auth.role() = 'authenticated')
-  with check (
-    -- Participants can only set is_flagged=true
-    is_flagged = true
-    and flagged_by = auth.uid()
-    -- Prevent participants from changing other fields
-    and is_approved = (select is_approved from public.media_items where id = media_items.id)
-  );
-
-create policy "media: admin moderate"
-  on public.media_items for update
-  using (public.my_role() = 'admin');
-
-create policy "media: admin delete"
-  on public.media_items for delete
-  using (public.my_role() = 'admin');
-
--- =============================================================
 -- HELP REQUESTS
 -- =============================================================
 alter table public.help_requests enable row level security;
@@ -156,32 +117,3 @@ create policy "help: volunteer/admin update"
   on public.help_requests for update
   using (public.my_role() in ('admin', 'volunteer'));
 
--- =============================================================
--- STORAGE POLICIES (via Supabase Dashboard or SQL below)
--- These apply to the 'event-media' bucket
--- =============================================================
-
-/*
-create policy "storage: authenticated upload"
-  on storage.objects for insert
-  to authenticated
-  with check (bucket_id = 'event-media');
-
-create policy "storage: public read"
-  on storage.objects for select
-  to public
-  using (bucket_id = 'event-media');
-
-create policy "storage: owner delete"
-  on storage.objects for delete
-  to authenticated
-  using (bucket_id = 'event-media' and auth.uid()::text = (storage.foldername(name))[1]);
-
-create policy "storage: admin delete all"
-  on storage.objects for delete
-  to authenticated
-  using (
-    bucket_id = 'event-media'
-    and exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
-  );
-*/

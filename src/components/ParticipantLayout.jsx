@@ -2,10 +2,9 @@ import { Outlet } from 'react-router-dom'
 import { NavLink } from 'react-router-dom'
 
 const TABS = [
-  { to: '/home',    label: 'Home' },
-  { to: '/queue',   label: 'Queue' },
-  { to: '/gallery', label: 'Media' },
-  { to: '/help',    label: 'Help' },
+  { to: '/home',  label: 'Home' },
+  { to: '/queue', label: 'Queue' },
+  { to: '/help',  label: 'Help' },
 ]
 
 export default function ParticipantLayout() {
@@ -28,7 +27,7 @@ export default function ParticipantLayout() {
 
         {/* Bottom navigation — static inside the frame, not fixed to viewport */}
         <nav className="bg-surface border-t-4 border-black flex-shrink-0 safe-area-bottom sm:rounded-b-3xl sm:overflow-hidden">
-          <div className="grid grid-cols-4">
+          <div className="grid grid-cols-3">
             {TABS.map(tab => (
               <NavLink
                 key={tab.to}
