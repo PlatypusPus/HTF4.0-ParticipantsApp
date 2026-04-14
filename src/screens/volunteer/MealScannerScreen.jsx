@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
@@ -10,16 +10,8 @@ const MEAL_TYPES = [
   { key: 'dinner',    label: 'Dinner',    icon: '🍽' },
 ]
 
-// Each participant can have each meal type this many times over the whole event
 const MAX_PER_MEAL_TYPE = 2
-
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10)
-}
 
 function pickDefaultMeal() {
   const h = new Date().getHours()
@@ -28,7 +20,6 @@ function pickDefaultMeal() {
   return 'dinner'
 }
 
-// Extract a profile id from an NDEF record payload (plain-text or URL encoded)
 function extractId(text) {
   if (!text) return null
   const m = String(text).match(UUID_RE)
@@ -36,21 +27,10 @@ function extractId(text) {
 }
 
 async function readNDEF(record) {
-  // Prefer decoding text/URL records; fallback to raw bytes
   try {
-    if (record.recordType === 'text') {
-      const dec = new TextDecoder(record.encoding || 'utf-8')
-      return dec.decode(record.data)
-    }
-    if (record.recordType === 'url') {
-      const dec = new TextDecoder()
-      return dec.decode(record.data)
-    }
-    const dec = new TextDecoder()
+    const dec = new TextDecoder(record.encoding || 'utf-8')
     return dec.decode(record.data)
-  } catch {
-    return ''
-  }
+  } catch { return '' }
 }
 
 // ─── Screen ─────────────────────────────────────────────────────────────────
@@ -59,108 +39,160 @@ export default function MealScannerScreen() {
   const { user } = useAuth()
   const toast = useToast()
 
-  const [meal,       setMeal]       = useState(pickDefaultMeal)
-  const [scanning,   setScanning]   = useState(false)
+  const [meal, setMeal] = useState(pickDefaultMeal)
+  const [scanning, setScanning] = useState(false)
   const [manualCode, setManualCode] = useState('')
-  const [recent,     setRecent]     = useState([])
-  const [lookup,     setLookup]     = useState(null) // { profile, alreadyServed }
-  const [busy,       setBusy]       = useState(false)
+  const [lookup, setLookup] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const [teams, setTeams] = useState([])
+  const [members, setMembers] = useState([])
+  const [records, setRecords] = useState([])
+  const [openTeamId, setOpenTeamId] = useState(null)
 
   const readerRef = useRef(null)
   const abortRef  = useRef(null)
 
-  // Diagnose why NFC is unavailable (in priority order)
   const nfcStatus = (() => {
     if (typeof window === 'undefined') return { ok: false, reason: 'ssr', msg: '' }
     if (!window.isSecureContext) return {
       ok: false, reason: 'insecure',
-      msg: 'Web NFC needs HTTPS. Deploy the container or use an HTTPS tunnel — it will not work over http://LAN-IP.',
+      msg: 'Web NFC needs HTTPS.',
     }
     const ua = navigator.userAgent
     const isAndroid = /Android/i.test(ua)
     const isChrome  = /Chrome\/\d+/.test(ua) && !/Edg|SamsungBrowser|Firefox|OPR/i.test(ua)
-    if (!isAndroid) return { ok: false, reason: 'platform', msg: 'Web NFC only works on Android. Use manual entry on iOS/desktop.' }
-    if (!isChrome)  return { ok: false, reason: 'browser',  msg: 'Open this page in Chrome for Android. Firefox / Samsung Internet do not support Web NFC.' }
-    if (!('NDEFReader' in window)) return {
-      ok: false, reason: 'api',
-      msg: 'Your Chrome build does not expose Web NFC. Update Chrome and ensure NFC is enabled in Android settings.',
-    }
+    if (!isAndroid) return { ok: false, reason: 'platform', msg: 'Web NFC only works on Android.' }
+    if (!isChrome)  return { ok: false, reason: 'browser',  msg: 'Open this page in Chrome for Android.' }
+    if (!('NDEFReader' in window)) return { ok: false, reason: 'api', msg: 'NFC not exposed by this Chrome build.' }
     return { ok: true, reason: 'ok', msg: '' }
   })()
   const nfcSupported = nfcStatus.ok
 
-  // ── Recent feed ──────────────────────────────────────────────────────────
-  const loadRecent = useCallback(async () => {
-    const { data } = await supabase
-      .from('meal_records')
-      .select('id, meal_type, served_at, profiles!user_id(full_name, team_code)')
-      .eq('meal_date', todayISO())
-      .order('served_at', { ascending: false })
-      .limit(15)
-    if (data) setRecent(data)
+  // ── Load teams + members + meal records ──────────────────────────────────
+  const load = useCallback(async () => {
+    const [t, m, r] = await Promise.all([
+      supabase.from('profiles').select('id, team_code, team_name, role').eq('role', 'participant').order('team_code'),
+      supabase.from('team_members').select('id, team_id, full_name').order('full_name'),
+      supabase.from('meal_records').select('id, user_id, team_member_id, meal_type, served_at').order('served_at', { ascending: false }),
+    ])
+    if (t.data) setTeams(t.data)
+    if (m.data) setMembers(m.data)
+    if (r.data) setRecords(r.data)
   }, [])
 
   useEffect(() => {
-    loadRecent()
+    load()
     const ch = supabase
-      .channel('volunteer_meals_rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'meal_records' }, loadRecent)
+      .channel('meals_by_team_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'meal_records' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, load)
       .subscribe()
     return () => supabase.removeChannel(ch)
-  }, [loadRecent])
+  }, [load])
 
-  // ── Core flow: identify participant + record meal ────────────────────────
-  const recordMeal = useCallback(async (profileId, mealType) => {
-    if (!profileId) { toast.error('No participant ID found on tag'); return }
+  // ── Grouped progress for selected meal ───────────────────────────────────
+  const grouped = useMemo(() => {
+    const memberByTeam = new Map()
+    for (const mem of members) {
+      const arr = memberByTeam.get(mem.team_id) ?? []
+      arr.push(mem); memberByTeam.set(mem.team_id, arr)
+    }
+
+    const memberCount = new Map() // team_member_id -> count for selected meal
+    const teamCount = new Map()   // team_id (legacy, no member) -> count
+    for (const r of records) {
+      if (r.meal_type !== meal) continue
+      if (r.team_member_id) memberCount.set(r.team_member_id, (memberCount.get(r.team_member_id) ?? 0) + 1)
+      else teamCount.set(r.user_id, (teamCount.get(r.user_id) ?? 0) + 1)
+    }
+
+    const rows = teams.map(team => {
+      const ms = memberByTeam.get(team.id) ?? []
+      const served = ms.filter(m => (memberCount.get(m.id) ?? 0) > 0)
+      const teamLevel = teamCount.get(team.id) ?? 0
+      return {
+        ...team,
+        members: ms.map(m => ({ ...m, count: memberCount.get(m.id) ?? 0 })),
+        servedCount: served.length,
+        totalCount: ms.length,
+        teamLevelCount: teamLevel,
+      }
+    })
+
+    const totals = rows.reduce(
+      (acc, r) => ({ served: acc.served + r.servedCount, total: acc.total + r.totalCount }),
+      { served: 0, total: 0 },
+    )
+
+    return { rows, totals }
+  }, [teams, members, records, meal])
+
+  // ── Core flow: identify participant/member and record meal ──────────────
+  const recordMeal = useCallback(async (id, mealType) => {
+    if (!id) { toast.error('No ID on tag'); return }
     setBusy(true)
     try {
-      // 1. Fetch profile (also confirms the id exists under RLS)
-      const { data: profile, error: pErr } = await supabase
-        .from('profiles')
-        .select('id, full_name, team_code, team_name, role')
-        .eq('id', profileId)
-        .maybeSingle()
+      // Resolve id: team_member first, then profile
+      let member = null
+      let team = null
 
-      if (pErr || !profile) {
-        toast.error('Participant not found')
-        setLookup(null)
+      const { data: mem } = await supabase
+        .from('team_members')
+        .select('id, team_id, full_name, team:profiles!team_id(id, team_code, team_name)')
+        .eq('id', id).maybeSingle()
+      if (mem) { member = mem; team = mem.team }
+
+      if (!team) {
+        const { data: prof } = await supabase
+          .from('profiles').select('id, team_code, team_name').eq('id', id).maybeSingle()
+        if (prof) team = prof
+      }
+
+      if (!team) {
+        toast.error('Not found'); setLookup(null); return
+      }
+
+      // Count how many times already served (per-member if we have one, else per-team)
+      let servedCount = 0
+      if (member) {
+        const { count } = await supabase
+          .from('meal_records').select('id', { count: 'exact', head: true })
+          .eq('team_member_id', member.id).eq('meal_type', mealType)
+        servedCount = count ?? 0
+      } else {
+        const { count } = await supabase
+          .from('meal_records').select('id', { count: 'exact', head: true })
+          .eq('user_id', team.id).eq('meal_type', mealType).is('team_member_id', null)
+        servedCount = count ?? 0
+      }
+
+      if (servedCount >= MAX_PER_MEAL_TYPE) {
+        setLookup({ team, member, alreadyServed: true, servedCount, mealType })
+        toast.error(`${member?.full_name ?? team.team_name} already had ${mealType} ${MAX_PER_MEAL_TYPE}×`)
         return
       }
 
-      // 2. Count how many times this participant has had this meal type across the event
-      const { count: servedCount } = await supabase
-        .from('meal_records')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', profileId)
-        .eq('meal_type', mealType)
-
-      if ((servedCount ?? 0) >= MAX_PER_MEAL_TYPE) {
-        setLookup({ profile, alreadyServed: true, servedCount })
-        toast.error(`${profile.full_name ?? 'Participant'} already had ${mealType} ${MAX_PER_MEAL_TYPE}×`)
-        return
-      }
-
-      // 3. Insert record
-      const { error: insErr } = await supabase.from('meal_records').insert({
-        user_id: profileId,
+      const { error } = await supabase.from('meal_records').insert({
+        user_id: team.id,
+        team_member_id: member?.id ?? null,
         meal_type: mealType,
         served_by: user?.id ?? null,
       })
 
-      if (insErr) {
-        // Unique constraint race — treat as already served
-        if (insErr.code === '23505') {
-          toast.error(`${profile.full_name ?? 'Participant'} already had ${mealType} today`)
-          setLookup({ profile, alreadyServed: true })
+      if (error) {
+        if (error.code === '23505') {
+          setLookup({ team, member, alreadyServed: true })
+          toast.error('Already served')
         } else {
           toast.error('Failed to record meal')
         }
         return
       }
 
-      setLookup({ profile, alreadyServed: null, servedCount: (servedCount ?? 0) + 1 })
-      toast.success(`✓ ${profile.full_name ?? 'Participant'} — ${mealType} (${(servedCount ?? 0) + 1}/${MAX_PER_MEAL_TYPE})`)
-      // Haptic feedback on mobile
+      setLookup({ team, member, alreadyServed: false, servedCount: servedCount + 1, mealType })
+      toast.success(`✓ ${member?.full_name ?? team.team_name} — ${mealType} (${servedCount + 1}/${MAX_PER_MEAL_TYPE})`)
       if (navigator.vibrate) navigator.vibrate(80)
     } finally {
       setBusy(false)
@@ -169,30 +201,23 @@ export default function MealScannerScreen() {
 
   // ── NFC scanning ─────────────────────────────────────────────────────────
   const startScan = useCallback(async () => {
-    if (!nfcSupported) {
-      toast.error('Web NFC not supported — use Chrome on Android')
-      return
-    }
+    if (!nfcSupported) { toast.error('Web NFC not supported'); return }
     try {
       const reader = new window.NDEFReader()
       readerRef.current = reader
       const ac = new AbortController()
       abortRef.current = ac
-
       await reader.scan({ signal: ac.signal })
       setScanning(true)
 
-      reader.onreadingerror = () => toast.error('Tag read error — try again')
+      reader.onreadingerror = () => toast.error('Tag read error')
       reader.onreading = async (ev) => {
         for (const rec of ev.message.records) {
           const text = await readNDEF(rec)
           const id = extractId(text)
-          if (id) {
-            await recordMeal(id, meal)
-            return
-          }
+          if (id) { await recordMeal(id, meal); return }
         }
-        toast.error('Tag has no valid participant ID')
+        toast.error('Tag has no valid ID')
       }
     } catch (e) {
       toast.error(e?.message ?? 'Failed to start NFC scan')
@@ -209,56 +234,32 @@ export default function MealScannerScreen() {
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
-  // ── Manual lookup (by team_code or UUID) ─────────────────────────────────
   async function handleManualSubmit(e) {
     e.preventDefault()
-    const code = manualCode.trim()
-    if (!code) return
+    const raw = manualCode.trim()
+    if (!raw) return
 
-    // UUID? Use directly. Otherwise treat as team_code and look up profile
-    if (UUID_RE.test(code)) {
-      await recordMeal(code.match(UUID_RE)[0], meal)
-      setManualCode('')
-      return
-    }
+    const uid = extractId(raw)
+    if (uid) { await recordMeal(uid, meal); setManualCode(''); return }
 
+    // Team code lookup → treats as team-level serve (no member resolution)
     setBusy(true)
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, full_name, team_code')
-      .eq('team_code', code.toUpperCase())
+    const { data: prof } = await supabase
+      .from('profiles').select('id, team_code, team_name')
+      .eq('team_code', raw.toUpperCase()).maybeSingle()
     setBusy(false)
 
-    if (!profiles || profiles.length === 0) {
-      toast.error(`No participant with code "${code}"`)
-      return
-    }
-    if (profiles.length > 1) {
-      toast.error(`${profiles.length} participants share that team code — scan NFC instead`)
-      return
-    }
-    await recordMeal(profiles[0].id, meal)
+    if (!prof) { toast.error(`No team with code "${raw}"`); return }
+    await recordMeal(prof.id, meal)
     setManualCode('')
   }
 
-  // ── NFC write mode (for provisioning stickers) ───────────────────────────
   async function writeTag() {
     if (!nfcSupported) { toast.error('Web NFC not supported'); return }
-    const code = manualCode.trim()
-    if (!code) { toast.error('Enter a team code or UUID first'); return }
-
-    let id = extractId(code)
-    if (!id) {
-      // Look up by team code
-      const { data: profiles } = await supabase
-        .from('profiles').select('id, team_code').eq('team_code', code.toUpperCase())
-      if (!profiles || profiles.length !== 1) {
-        toast.error('Enter a unique team code or the participant UUID')
-        return
-      }
-      id = profiles[0].id
-    }
-
+    const raw = manualCode.trim()
+    if (!raw) { toast.error('Enter a UUID first'); return }
+    const id = extractId(raw)
+    if (!id) { toast.error('Enter a valid UUID'); return }
     try {
       const writer = new window.NDEFReader()
       await writer.write({ records: [{ recordType: 'text', data: `htf4:${id}` }] })
@@ -268,13 +269,16 @@ export default function MealScannerScreen() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="font-headline font-black text-3xl uppercase italic text-white">Meals</h1>
-        <span className="font-body font-bold text-sm text-surface-variant">{recent.length} served recently</span>
+        {grouped.totals.total > 0 && (
+          <div className="bg-tertiary-container border-4 border-black px-3 py-1 drop-block rounded-2xl">
+            <span className="font-headline font-black text-lg text-on-tertiary-container">{grouped.totals.served}</span>
+            <span className="font-body font-bold text-[10px] text-on-tertiary-container opacity-80 ml-1">/{grouped.totals.total} had {meal}</span>
+          </div>
+        )}
       </div>
 
       {/* Meal selector */}
@@ -302,28 +306,18 @@ export default function MealScannerScreen() {
             <div className="text-5xl mb-3">📱</div>
             <p className="font-headline font-black text-base uppercase italic text-black">NFC Unavailable</p>
             <p className="font-body font-bold text-sm text-on-surface-variant mt-2">
-              {nfcStatus.msg || 'Web NFC only works in Chrome on Android over HTTPS.'}
+              {nfcStatus.msg || 'Chrome on Android + HTTPS required.'}
             </p>
-            <p className="font-body text-xs text-outline mt-3">
-              Reason code: <code className="bg-surface-container px-1 rounded">{nfcStatus.reason}</code> ·
-              {' '}secure: <code className="bg-surface-container px-1 rounded">{String(window.isSecureContext)}</code>
-            </p>
-            <p className="font-body text-xs text-on-surface-variant mt-2">
-              You can still use manual entry below.
-            </p>
+            <p className="font-body text-xs text-on-surface-variant mt-2">Use manual entry below.</p>
           </div>
         ) : scanning ? (
           <div className="text-center flex flex-col items-center gap-3">
             <div className="relative w-24 h-24 flex items-center justify-center">
               <div className="absolute inset-0 border-4 border-primary-container rounded-full animate-ping opacity-60" />
-              <div className="relative bg-primary-container border-4 border-black rounded-full w-20 h-20 flex items-center justify-center text-4xl">
-                📡
-              </div>
+              <div className="relative bg-primary-container border-4 border-black rounded-full w-20 h-20 flex items-center justify-center text-4xl">📡</div>
             </div>
             <p className="font-headline font-black text-lg uppercase italic text-black">Tap a Sticker</p>
-            <p className="font-body font-bold text-sm text-on-surface-variant">
-              Hold the back of the phone against the NFC sticker
-            </p>
+            <p className="font-body font-bold text-sm text-on-surface-variant">Hold phone against the NFC sticker</p>
             <button
               onClick={stopScan}
               className="mt-2 bg-error-container border-2 border-error text-on-error-container px-5 py-2 font-headline font-black text-xs uppercase italic drop-block rounded-xl active:scale-95"
@@ -348,7 +342,7 @@ export default function MealScannerScreen() {
         )}
       </div>
 
-      {/* Last lookup feedback */}
+      {/* Last lookup */}
       {lookup && (
         <div className={`border-4 p-4 rounded-2xl drop-block ${
           lookup.alreadyServed
@@ -358,12 +352,14 @@ export default function MealScannerScreen() {
           <div className="flex items-center gap-3">
             <span className="text-3xl">{lookup.alreadyServed ? '⚠' : '✓'}</span>
             <div className="flex-1 min-w-0">
-              <p className="font-headline font-black text-lg italic truncate">{lookup.profile.full_name}</p>
+              <p className="font-headline font-black text-lg italic truncate">
+                {lookup.member?.full_name ?? lookup.team?.team_name}
+              </p>
               <p className="font-body font-bold text-sm opacity-80">
-                {lookup.profile.team_code ? `Team ${lookup.profile.team_code} · ` : ''}
+                {lookup.team?.team_code ? `Team ${lookup.team.team_code} · ` : ''}
                 {lookup.alreadyServed
-                  ? `Max ${MAX_PER_MEAL_TYPE}× ${meal} reached`
-                  : `${meal} served ✓ (${lookup.servedCount ?? 1}/${MAX_PER_MEAL_TYPE})`}
+                  ? `Max ${MAX_PER_MEAL_TYPE}× ${lookup.mealType ?? meal} reached`
+                  : `${lookup.mealType ?? meal} served (${lookup.servedCount ?? 1}/${MAX_PER_MEAL_TYPE})`}
               </p>
             </div>
           </div>
@@ -377,7 +373,7 @@ export default function MealScannerScreen() {
           <input
             value={manualCode}
             onChange={e => setManualCode(e.target.value)}
-            placeholder="Team code (e.g. A00) or UUID"
+            placeholder="Team code or UUID"
             className="flex-1 bg-white border-4 border-black px-3 py-2 font-body font-bold text-sm focus:outline-none focus:border-primary rounded-xl"
           />
           <button
@@ -394,45 +390,92 @@ export default function MealScannerScreen() {
             onClick={writeTag}
             className="mt-2 w-full bg-tertiary-container text-on-tertiary-container border-2 border-black px-3 py-2 font-headline font-black text-xs uppercase italic rounded-xl active:scale-95"
           >
-            ✎ Write Tag with Above Code
+            ✎ Write Tag with Above UUID
           </button>
         )}
         <p className="font-body text-xs text-on-surface-variant mt-2">
-          NFC stickers store the participant UUID as text. Use <span className="text-black">Write Tag</span> to
-          provision a blank sticker for a participant.
+          NFC stickers hold the team member&apos;s UUID. The team is resolved automatically.
         </p>
       </div>
 
-      {/* Recent feed */}
+      {/* Grouped progress for the selected meal */}
       <div>
-        <h2 className="font-headline font-black text-sm uppercase italic mb-3 text-white">Served Today</h2>
-        {recent.length === 0 ? (
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-headline font-black text-sm uppercase italic text-white">
+            {meal.charAt(0).toUpperCase() + meal.slice(1)} — by team
+          </h2>
+        </div>
+
+        {grouped.rows.length === 0 ? (
           <div className="bg-surface-container border-4 border-black p-6 rounded-3xl text-center">
-            <p className="font-body font-bold text-on-surface-variant">No meals recorded yet</p>
+            <p className="font-body font-bold text-on-surface-variant">No teams seeded</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {recent.map(r => (
-              <div key={r.id} className="bg-surface border-4 border-black px-4 py-3 rounded-2xl flex items-center gap-3">
-                <span className="text-2xl flex-shrink-0">
-                  {MEAL_TYPES.find(m => m.key === r.meal_type)?.icon ?? '🍽'}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-headline font-black text-base italic truncate text-black">
-                    {r.profiles?.full_name ?? 'Unknown'}
-                  </p>
-                  <p className="font-body font-bold text-xs text-on-surface-variant">
-                    {r.meal_type}
-                    {r.profiles?.team_code && (
-                      <span className="font-mono text-primary"> · {r.profiles.team_code}</span>
+            {grouped.rows.map(row => {
+              const open = openTeamId === row.id
+              const pct = row.totalCount > 0 ? row.servedCount / row.totalCount : 0
+              const bg = row.totalCount === 0
+                ? 'bg-surface'
+                : row.servedCount === row.totalCount
+                  ? 'bg-primary-container'
+                  : row.servedCount > 0
+                    ? 'bg-tertiary-container'
+                    : 'bg-surface'
+              return (
+                <div key={row.id} className={`${bg} border-4 border-black rounded-2xl overflow-hidden`}>
+                  <button
+                    onClick={() => setOpenTeamId(open ? null : row.id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left"
+                  >
+                    <span className="font-mono font-bold text-xs bg-black text-white px-2 py-0.5 rounded w-14 text-center flex-shrink-0">
+                      {row.team_code}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-headline font-black text-base italic truncate">{row.team_name}</p>
+                      <p className="font-body font-bold text-xs opacity-80">
+                        {row.totalCount > 0
+                          ? `${row.servedCount}/${row.totalCount} had ${meal}`
+                          : row.teamLevelCount > 0
+                            ? `Team-level: ${row.teamLevelCount}× ${meal}`
+                            : 'No members added'}
+                      </p>
+                    </div>
+                    {row.totalCount > 0 && (
+                      <div className="w-14 h-2 bg-black/20 rounded-full overflow-hidden flex-shrink-0">
+                        <div className="h-full bg-black" style={{ width: `${pct * 100}%` }} />
+                      </div>
                     )}
-                  </p>
+                    <span className="text-lg">{open ? '▴' : '▾'}</span>
+                  </button>
+                  {open && row.members.length > 0 && (
+                    <ul className="border-t-4 border-black bg-white/60">
+                      {row.members.map(m => (
+                        <li key={m.id} className="flex items-center justify-between px-4 py-2 border-b-2 border-black/10 last:border-b-0">
+                          <span className="font-body font-bold text-sm truncate">{m.full_name}</span>
+                          <span className={`font-headline font-black text-[10px] uppercase italic px-2 py-0.5 rounded-lg ${
+                            m.count >= MAX_PER_MEAL_TYPE
+                              ? 'bg-surface-variant text-on-surface'
+                              : m.count > 0
+                                ? 'bg-primary-container text-on-primary-container'
+                                : 'bg-error-container text-on-error-container'
+                          }`}>
+                            {m.count >= MAX_PER_MEAL_TYPE ? `max ${MAX_PER_MEAL_TYPE}×` : m.count > 0 ? `${m.count}×` : 'missed'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {open && row.members.length === 0 && (
+                    <div className="border-t-4 border-black bg-white/60 px-4 py-3">
+                      <p className="font-body font-bold text-xs text-on-surface-variant">
+                        No members on this team yet. Upload participant data to enable per-person tracking.
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <p className="font-mono text-xs text-outline flex-shrink-0">
-                  {new Date(r.served_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

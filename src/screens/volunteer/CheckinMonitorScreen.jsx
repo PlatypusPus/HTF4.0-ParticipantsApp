@@ -1,36 +1,46 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useToast } from '../../contexts/ToastContext'
 import LoadingSpinner from '../../components/ui/LoadingSpinner'
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
-function parsePayload(raw) {
-  if (!raw) return null
-  try {
-    const obj = JSON.parse(raw)
-    if (obj && typeof obj === 'object' && typeof obj.uid === 'string' && UUID_RE.test(obj.uid)) {
-      return { uid: obj.uid.match(UUID_RE)[0], team_name: obj.name ?? obj.team ?? null, team_code: obj.code ?? null }
-    }
-  } catch { /* not json */ }
-  const m = String(raw).match(UUID_RE)
-  return m ? { uid: m[0], team_name: null, team_code: null } : null
-}
-
 function detectorSupported() {
   return typeof window !== 'undefined' && 'BarcodeDetector' in window
 }
 
+function extractUuid(raw) {
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw)
+    if (obj?.uid && UUID_RE.test(obj.uid)) return obj.uid.match(UUID_RE)[0]
+    if (obj?.member && UUID_RE.test(obj.member)) return obj.member.match(UUID_RE)[0]
+  } catch { /* not json */ }
+  const m = String(raw).match(UUID_RE)
+  return m ? m[0] : null
+}
+
+function extractCode(raw) {
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw)
+    if (typeof obj?.code === 'string') return obj.code.toUpperCase()
+  } catch { /* not json */ }
+  return null
+}
+
 export default function CheckinMonitorScreen() {
   const toast = useToast()
+  const [teams, setTeams] = useState([])
+  const [members, setMembers] = useState([])
   const [checkins, setCheckins] = useState([])
-  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
   const [scanning, setScanning] = useState(false)
-  const [lastResult, setLastResult] = useState(null)
   const [manualCode, setManualCode] = useState('')
   const [busy, setBusy] = useState(false)
+  const [lastResult, setLastResult] = useState(null)
+  const [search, setSearch] = useState('')
+  const [openTeamId, setOpenTeamId] = useState(null)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -38,74 +48,152 @@ export default function CheckinMonitorScreen() {
   const detectorRef = useRef(null)
   const busyRef = useRef(false)
 
-  const loadCheckins = useCallback(async () => {
-    const { data, count } = await supabase
-      .from('checkins')
-      .select('*, profiles(team_name, team_code)', { count: 'exact' })
-      .order('checked_in_at', { ascending: false })
-    if (data) setCheckins(data)
-    if (count !== null) setTotal(count)
+  const load = useCallback(async () => {
+    const [t, m, c] = await Promise.all([
+      supabase.from('profiles').select('id, team_code, team_name, role').eq('role', 'participant').order('team_code'),
+      supabase.from('team_members').select('id, team_id, full_name, checked_in, checked_in_at').order('full_name'),
+      supabase.from('checkins').select('id, user_id, team_member_id, checked_in_at').order('checked_in_at', { ascending: false }),
+    ])
+    if (t.data) setTeams(t.data)
+    if (m.data) setMembers(m.data)
+    if (c.data) setCheckins(c.data)
     setLoading(false)
   }, [])
 
   useEffect(() => {
-    loadCheckins()
+    load()
     const ch = supabase
-      .channel('admin_checkins_rt')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'checkins' }, loadCheckins)
+      .channel('checkins_monitor_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, load)
       .subscribe()
     return () => supabase.removeChannel(ch)
-  }, [loadCheckins])
+  }, [load])
 
-  const confirmCheckin = useCallback(async ({ uid, team_name, team_code }) => {
+  // ─── Grouped view: team → {members[], present} ──────────────────────────────
+  const grouped = useMemo(() => {
+    const memberByTeam = new Map()
+    for (const mem of members) {
+      const arr = memberByTeam.get(mem.team_id) ?? []
+      arr.push(mem)
+      memberByTeam.set(mem.team_id, arr)
+    }
+    const checkinByMember = new Map()
+    const teamCheckin = new Map()
+    for (const c of checkins) {
+      if (c.team_member_id) checkinByMember.set(c.team_member_id, c)
+      else teamCheckin.set(c.user_id, c)
+    }
+
+    const totals = { teamsPresent: 0, teamsTotal: teams.length, membersPresent: 0, membersTotal: members.length }
+
+    const rows = teams.map(team => {
+      const memberList = memberByTeam.get(team.id) ?? []
+      const present = memberList.filter(m => checkinByMember.has(m.id))
+      const teamLevel = teamCheckin.get(team.id) ?? null
+      const isTeamIn = !!teamLevel || present.length > 0
+      if (isTeamIn) totals.teamsPresent += 1
+      totals.membersPresent += present.length
+      return {
+        ...team,
+        members: memberList.map(m => ({
+          ...m,
+          checkin: checkinByMember.get(m.id) ?? null,
+        })),
+        teamLevelCheckin: teamLevel,
+        presentCount: present.length,
+        totalCount: memberList.length,
+        isTeamIn,
+      }
+    })
+
+    const q = search.trim().toLowerCase()
+    const filtered = q
+      ? rows.filter(r =>
+        r.team_code.toLowerCase().includes(q) ||
+        r.team_name.toLowerCase().includes(q) ||
+        r.members.some(m => m.full_name.toLowerCase().includes(q)))
+      : rows
+
+    return { rows: filtered, totals }
+  }, [teams, members, checkins, search])
+
+  // ─── Core: confirm check-in ────────────────────────────────────────────────
+  const confirmCheckin = useCallback(async ({ uid, code }) => {
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
     try {
-      let profile = null
+      let member = null
+      let team = null
+
       if (uid) {
-        const { data } = await supabase
-          .from('profiles').select('id, team_name, team_code').eq('id', uid).maybeSingle()
-        profile = data
+        const { data: mem } = await supabase
+          .from('team_members')
+          .select('id, team_id, full_name, team:profiles!team_id(id, team_code, team_name)')
+          .eq('id', uid).maybeSingle()
+        if (mem) { member = mem; team = mem.team }
       }
-      if (!profile && team_code) {
-        const { data } = await supabase
-          .from('profiles').select('id, team_name, team_code').eq('team_code', team_code.toUpperCase()).maybeSingle()
-        profile = data
+
+      if (!team && uid) {
+        const { data: prof } = await supabase
+          .from('profiles').select('id, team_code, team_name').eq('id', uid).maybeSingle()
+        if (prof) team = prof
       }
-      if (!profile) {
+
+      if (!team && code) {
+        const { data: prof } = await supabase
+          .from('profiles').select('id, team_code, team_name').eq('team_code', code).maybeSingle()
+        if (prof) team = prof
+      }
+
+      if (!team) {
         setLastResult({ ok: false, message: 'Participant not found' })
-        toast.error('Participant not found')
+        toast.error('Not found')
         return
       }
 
-      const { data: existing } = await supabase
-        .from('checkins').select('id, checked_in_at').eq('user_id', profile.id).maybeSingle()
-
-      if (existing) {
-        setLastResult({ ok: true, already: true, profile, at: existing.checked_in_at })
-        toast.info(`${profile.team_name ?? team_name ?? 'Team'} already checked in`)
-        return
-      }
-
-      const { error: insErr } = await supabase.from('checkins').insert({ user_id: profile.id })
-      if (insErr) {
-        if (insErr.code === '23505') {
-          setLastResult({ ok: true, already: true, profile })
-          toast.info('Already checked in')
+      // Already checked in?
+      if (member) {
+        const { data: existing } = await supabase
+          .from('checkins').select('id, checked_in_at').eq('team_member_id', member.id).maybeSingle()
+        if (existing) {
+          setLastResult({ ok: true, already: true, team, member, at: existing.checked_in_at })
+          toast.info(`${member.full_name} already checked in`)
           return
         }
-        setLastResult({ ok: false, message: insErr.message || 'Check-in failed' })
-        toast.error('Check-in failed')
-        return
+        const { error } = await supabase.from('checkins').insert({
+          user_id: team.id, team_member_id: member.id,
+        })
+        if (error && error.code !== '23505') {
+          setLastResult({ ok: false, message: error.message }); toast.error('Check-in failed'); return
+        }
+        await supabase.from('team_members').update({
+          checked_in: true, checked_in_at: new Date().toISOString(),
+        }).eq('id', member.id)
+        setLastResult({ ok: true, already: false, team, member })
+        toast.success(`✓ ${member.full_name} (${team.team_code})`)
+      } else {
+        const { data: existing } = await supabase
+          .from('checkins').select('id, checked_in_at')
+          .eq('user_id', team.id).is('team_member_id', null).maybeSingle()
+        if (existing) {
+          setLastResult({ ok: true, already: true, team, at: existing.checked_in_at })
+          toast.info(`Team ${team.team_code} already checked in`)
+          return
+        }
+        const { error } = await supabase.from('checkins').insert({ user_id: team.id })
+        if (error && error.code !== '23505') {
+          setLastResult({ ok: false, message: error.message }); toast.error('Check-in failed'); return
+        }
+        await supabase.from('profiles').update({
+          checked_in: true, checked_in_at: new Date().toISOString(),
+        }).eq('id', team.id)
+        setLastResult({ ok: true, already: false, team })
+        toast.success(`✓ Team ${team.team_code} checked in`)
       }
 
-      await supabase.from('profiles').update({
-        checked_in: true, checked_in_at: new Date().toISOString(),
-      }).eq('id', profile.id)
-
-      setLastResult({ ok: true, already: false, profile, at: new Date().toISOString() })
-      toast.success(`✓ ${profile.team_name ?? 'Team'} checked in`)
       if (navigator.vibrate) navigator.vibrate(80)
     } finally {
       busyRef.current = false
@@ -113,6 +201,7 @@ export default function CheckinMonitorScreen() {
     }
   }, [toast])
 
+  // ─── QR scanner ──────────────────────────────────────────────────────────
   const stopScan = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     rafRef.current = null
@@ -124,18 +213,13 @@ export default function CheckinMonitorScreen() {
   }, [])
 
   const startScan = useCallback(async () => {
-    if (!detectorSupported()) {
-      toast.error('QR scanning unavailable — use manual entry or Chrome on Android')
-      return
-    }
+    if (!detectorSupported()) { toast.error('QR scanning needs Chrome on Android'); return }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: false,
+        video: { facingMode: { ideal: 'environment' } }, audio: false,
       })
       streamRef.current = stream
       setScanning(true)
-      // Attach after render — videoRef may not exist until scanning=true
       setTimeout(async () => {
         const v = videoRef.current
         if (!v) return
@@ -148,12 +232,11 @@ export default function CheckinMonitorScreen() {
           try {
             const codes = await detectorRef.current.detect(videoRef.current)
             if (codes?.[0]?.rawValue) {
-              const payload = parsePayload(codes[0].rawValue)
-              if (payload) {
-                await confirmCheckin(payload)
-              } else {
-                toast.error('Unrecognised QR')
-              }
+              const raw = codes[0].rawValue
+              const uid = extractUuid(raw)
+              const code = extractCode(raw)
+              if (uid || code) await confirmCheckin({ uid, code })
+              else toast.error('Unrecognised QR')
             }
           } catch { /* frame error */ }
           rafRef.current = requestAnimationFrame(tick)
@@ -161,8 +244,7 @@ export default function CheckinMonitorScreen() {
         rafRef.current = requestAnimationFrame(tick)
       }, 50)
     } catch (e) {
-      toast.error(e?.message ?? 'Camera permission denied')
-      setScanning(false)
+      toast.error(e?.message ?? 'Camera permission denied'); setScanning(false)
     }
   }, [toast, confirmCheckin])
 
@@ -170,22 +252,13 @@ export default function CheckinMonitorScreen() {
 
   async function handleManualSubmit(e) {
     e.preventDefault()
-    const code = manualCode.trim()
-    if (!code) return
-    const payload = parsePayload(code) ?? { uid: null, team_name: null, team_code: code }
-    await confirmCheckin(payload)
+    const raw = manualCode.trim()
+    if (!raw) return
+    const uid = extractUuid(raw)
+    const code = uid ? null : raw.toUpperCase()
+    await confirmCheckin({ uid, code })
     setManualCode('')
   }
-
-  const filtered = search.trim()
-    ? checkins.filter(c => {
-      const q = search.toLowerCase()
-      return (
-        c.profiles?.team_name?.toLowerCase().includes(q) ||
-        c.profiles?.team_code?.toLowerCase().includes(q)
-      )
-    })
-    : checkins
 
   if (loading) return <div className="py-12"><LoadingSpinner /></div>
 
@@ -193,29 +266,31 @@ export default function CheckinMonitorScreen() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="font-headline font-black text-3xl uppercase italic text-white">Check-ins</h1>
-        <div className="bg-primary-container border-4 border-black px-4 py-2 drop-block rounded-2xl">
-          <span className="font-headline font-black text-2xl text-on-primary-container">{total}</span>
-          <span className="font-body font-bold text-xs text-on-primary-container opacity-80 ml-1">in</span>
+        <div className="flex gap-2">
+          <div className="bg-primary-container border-4 border-black px-3 py-1 drop-block rounded-2xl">
+            <span className="font-headline font-black text-lg text-on-primary-container">{grouped.totals.teamsPresent}</span>
+            <span className="font-body font-bold text-[10px] text-on-primary-container opacity-80 ml-1">/{grouped.totals.teamsTotal} teams</span>
+          </div>
+          {grouped.totals.membersTotal > 0 && (
+            <div className="bg-tertiary-container border-4 border-black px-3 py-1 drop-block rounded-2xl">
+              <span className="font-headline font-black text-lg text-on-tertiary-container">{grouped.totals.membersPresent}</span>
+              <span className="font-body font-bold text-[10px] text-on-tertiary-container opacity-80 ml-1">/{grouped.totals.membersTotal} ppl</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Scanner card */}
+      {/* Scanner */}
       <div className="bg-surface border-4 border-black rounded-3xl p-5 drop-block">
         {scanning ? (
           <div className="flex flex-col items-center gap-3">
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className="w-full max-w-sm aspect-square object-cover border-4 border-black rounded-2xl bg-black"
-            />
+            <video ref={videoRef} playsInline muted
+              className="w-full max-w-sm aspect-square object-cover border-4 border-black rounded-2xl bg-black" />
             <p className="font-body font-bold text-sm text-on-surface-variant">
-              Point the camera at the participant&apos;s QR
+              Point at the participant&apos;s QR
             </p>
-            <button
-              onClick={stopScan}
-              className="bg-error-container border-2 border-error text-on-error-container px-5 py-2 font-headline font-black text-xs uppercase italic drop-block rounded-xl active:scale-95"
-            >
+            <button onClick={stopScan}
+              className="bg-error-container border-2 border-error text-on-error-container px-5 py-2 font-headline font-black text-xs uppercase italic drop-block rounded-xl active:scale-95">
               Stop Scanning
             </button>
           </div>
@@ -225,14 +300,11 @@ export default function CheckinMonitorScreen() {
             <p className="font-headline font-black text-lg uppercase italic text-black">Scan Participant QR</p>
             {!detectorSupported() && (
               <p className="font-body font-bold text-xs text-on-surface-variant max-w-xs">
-                Camera QR detection requires Chrome on Android. Use manual entry below on other devices.
+                Camera scanning needs Chrome on Android. Use manual entry below otherwise.
               </p>
             )}
-            <button
-              onClick={startScan}
-              disabled={!detectorSupported() || busy}
-              className="bg-primary-container text-on-primary-container border-4 border-black px-6 py-3 font-headline font-black text-sm uppercase italic drop-block rounded-2xl active:scale-95 disabled:opacity-50"
-            >
+            <button onClick={startScan} disabled={!detectorSupported() || busy}
+              className="bg-primary-container text-on-primary-container border-4 border-black px-6 py-3 font-headline font-black text-sm uppercase italic drop-block rounded-2xl active:scale-95 disabled:opacity-50">
               Start Camera →
             </button>
           </div>
@@ -252,11 +324,11 @@ export default function CheckinMonitorScreen() {
             <span className="text-3xl">{!lastResult.ok ? '⚠' : lastResult.already ? 'ℹ' : '✓'}</span>
             <div className="flex-1 min-w-0">
               <p className="font-headline font-black text-lg italic truncate">
-                {lastResult.profile?.team_name ?? lastResult.message ?? '—'}
+                {lastResult.member?.full_name ?? lastResult.team?.team_name ?? lastResult.message ?? '—'}
               </p>
               <p className="font-body font-bold text-sm opacity-80">
-                {lastResult.profile?.team_code ? `Team ${lastResult.profile.team_code} · ` : ''}
-                {!lastResult.ok ? 'Error' : lastResult.already ? 'Already checked in' : 'Checked in ✓'}
+                {lastResult.team?.team_code ? `Team ${lastResult.team.team_code}` : ''}
+                {lastResult.ok ? (lastResult.already ? ' · Already checked in' : ' · Checked in ✓') : ''}
               </p>
             </div>
           </div>
@@ -267,59 +339,87 @@ export default function CheckinMonitorScreen() {
       <div className="bg-surface-container border-4 border-black p-4 rounded-3xl">
         <h2 className="font-headline font-black text-sm uppercase italic mb-3 text-black">Manual Entry</h2>
         <form onSubmit={handleManualSubmit} className="flex gap-2">
-          <input
-            value={manualCode}
-            onChange={e => setManualCode(e.target.value)}
-            placeholder="Team code or participant UUID"
-            className="flex-1 bg-white border-4 border-black px-3 py-2 font-body font-bold text-sm focus:outline-none focus:border-primary rounded-xl"
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="bg-primary-container text-on-primary-container border-4 border-black px-4 py-2 font-headline font-black text-xs uppercase italic drop-block rounded-xl active:scale-95 disabled:opacity-50"
-          >
+          <input value={manualCode} onChange={e => setManualCode(e.target.value)}
+            placeholder="Team code or UUID"
+            className="flex-1 bg-white border-4 border-black px-3 py-2 font-body font-bold text-sm focus:outline-none focus:border-primary rounded-xl" />
+          <button type="submit" disabled={busy}
+            className="bg-primary-container text-on-primary-container border-4 border-black px-4 py-2 font-headline font-black text-xs uppercase italic drop-block rounded-xl active:scale-95 disabled:opacity-50">
             {busy ? <LoadingSpinner size="sm" /> : 'Confirm'}
           </button>
         </form>
       </div>
 
-      {/* List */}
+      {/* Grouped list */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-headline font-black text-sm uppercase italic text-white">Recent</h2>
+          <h2 className="font-headline font-black text-sm uppercase italic text-white">By Team</h2>
         </div>
-        <input
-          type="search"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name or team..."
-          className="w-full bg-white border-4 border-black px-4 py-3 font-body font-bold text-base focus:outline-none focus:border-primary rounded-xl mb-3"
-        />
+        <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search team, code, or member..."
+          className="w-full bg-white border-4 border-black px-4 py-3 font-body font-bold text-base focus:outline-none focus:border-primary rounded-xl mb-3" />
 
-        {filtered.length === 0 ? (
+        {grouped.rows.length === 0 ? (
           <div className="bg-surface-container border-4 border-black p-6 rounded-3xl text-center">
             <p className="font-body font-bold text-on-surface-variant">
-              {search ? 'No matches found' : 'No one checked in yet'}
+              {search ? 'No matches' : 'No teams seeded'}
             </p>
           </div>
         ) : (
           <div className="space-y-2">
-            {filtered.map((item, idx) => (
-              <div key={item.id} className="bg-surface border-4 border-black px-4 py-3 rounded-2xl flex items-center gap-3">
-                <span className="font-headline font-black text-lg text-outline w-7 flex-shrink-0 text-right">{idx + 1}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-headline font-black text-base italic truncate">{item.profiles?.team_name ?? 'Unknown'}</p>
-                  <p className="font-body font-bold text-sm text-on-surface-variant">
-                    {item.profiles?.team_code && (
-                      <span className="font-mono text-primary">{item.profiles.team_code}</span>
+            {grouped.rows.map(row => {
+              const open = openTeamId === row.id
+              const pct = row.totalCount > 0 ? row.presentCount / row.totalCount : 0
+              const bg = row.totalCount === 0
+                ? (row.isTeamIn ? 'bg-primary-container' : 'bg-surface')
+                : (row.presentCount === row.totalCount ? 'bg-primary-container' : row.presentCount > 0 ? 'bg-tertiary-container' : 'bg-surface')
+              return (
+                <div key={row.id} className={`${bg} border-4 border-black rounded-2xl overflow-hidden`}>
+                  <button
+                    onClick={() => setOpenTeamId(open ? null : row.id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left"
+                  >
+                    <span className="font-mono font-bold text-xs bg-black text-white px-2 py-0.5 rounded w-14 text-center flex-shrink-0">
+                      {row.team_code}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-headline font-black text-base italic truncate">{row.team_name}</p>
+                      <p className="font-body font-bold text-xs opacity-80">
+                        {row.totalCount > 0
+                          ? `${row.presentCount}/${row.totalCount} present`
+                          : row.isTeamIn ? 'Team checked in' : 'Not checked in'}
+                      </p>
+                    </div>
+                    {row.totalCount > 0 && (
+                      <div className="w-14 h-2 bg-black/20 rounded-full overflow-hidden flex-shrink-0">
+                        <div className="h-full bg-black" style={{ width: `${pct * 100}%` }} />
+                      </div>
                     )}
-                  </p>
+                    <span className="text-lg">{open ? '▴' : '▾'}</span>
+                  </button>
+                  {open && row.members.length > 0 && (
+                    <ul className="border-t-4 border-black bg-white/60">
+                      {row.members.map(m => (
+                        <li key={m.id} className="flex items-center justify-between px-4 py-2 border-b-2 border-black/10 last:border-b-0">
+                          <span className="font-body font-bold text-sm truncate">{m.full_name}</span>
+                          <span className={`font-headline font-black text-[10px] uppercase italic px-2 py-0.5 rounded-lg ${
+                            m.checkin ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'
+                          }`}>
+                            {m.checkin ? '✓ in' : 'absent'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {open && row.members.length === 0 && (
+                    <div className="border-t-4 border-black bg-white/60 px-4 py-3">
+                      <p className="font-body font-bold text-xs text-on-surface-variant">
+                        No members added yet. Scan the team QR/code for a team-level check-in.
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <p className="font-mono text-xs text-outline flex-shrink-0">
-                  {new Date(item.checked_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
