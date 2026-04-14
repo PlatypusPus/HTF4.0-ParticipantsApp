@@ -1,12 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { useToast } from '../../contexts/ToastContext'
+import { NFC_TEAMS } from '../../data/nfcTeams'
+import { buildMemberPayload, normalizeName } from '../../lib/nfcPayload'
 
 const WIFI_SSID = 'changethis'
 const WIFI_PASSWORD = 'changethis'
+
+function memberStorageKey(teamCode) {
+  return `htf4.member.${teamCode || 'unknown'}`
+}
 
 export default function CheckInScreen() {
   const { user, profile, fetchProfile } = useAuth()
@@ -15,13 +21,42 @@ export default function CheckInScreen() {
   const [checkedIn, setCheckedIn] = useState(!!profile?.checked_in)
   const [revealPwd, setRevealPwd] = useState(false)
   const [copied, setCopied] = useState(null)
+  const [selectedName, setSelectedName] = useState(null)
+  const [memberCheckins, setMemberCheckins] = useState([])
 
-  const qrPayload = JSON.stringify({
-    uid: user?.id ?? '',
-    name: profile?.team_name ?? '',
-    team: profile?.team_name ?? '',
-    code: profile?.team_code ?? '',
-  })
+  const teamCode = profile?.team_code ?? ''
+
+  // Roster for this team (from the same data used by NfcWriteScreen)
+  const roster = useMemo(
+    () => NFC_TEAMS.filter(r => r.teamCode === teamCode).map(r => r.name),
+    [teamCode],
+  )
+
+  // Restore the member selection per team_code
+  useEffect(() => {
+    if (!teamCode) return
+    const saved = localStorage.getItem(memberStorageKey(teamCode))
+    if (saved && roster.some(n => normalizeName(n) === normalizeName(saved))) {
+      setSelectedName(saved)
+    } else {
+      setSelectedName(null)
+    }
+  }, [teamCode, roster])
+
+  function chooseMember(name) {
+    setSelectedName(name)
+    if (teamCode) localStorage.setItem(memberStorageKey(teamCode), name)
+  }
+
+  function clearMember() {
+    setSelectedName(null)
+    if (teamCode) localStorage.removeItem(memberStorageKey(teamCode))
+  }
+
+  // Payload that matches what's written on the NFC sticker
+  const qrPayload = selectedName
+    ? buildMemberPayload(teamCode, selectedName)
+    : JSON.stringify({ uid: user?.id ?? '', team: profile?.team_name ?? '', code: teamCode })
 
   useEffect(() => {
     if (!user) return
@@ -30,8 +65,10 @@ export default function CheckInScreen() {
 
     async function probe() {
       const { data } = await supabase
-        .from('checkins').select('id').eq('user_id', user.id).maybeSingle()
-      if (!cancelled && data) {
+        .from('checkins').select('id, team_member_id').eq('user_id', user.id)
+      if (cancelled || !data) return
+      setMemberCheckins(data)
+      if (data.some(r => r.team_member_id === null)) {
         setCheckedIn(true)
         fetchProfile(user.id)
       }
@@ -43,10 +80,16 @@ export default function CheckInScreen() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'checkins', filter: `user_id=eq.${user.id}` },
-        () => {
-          setCheckedIn(true)
-          toast.success('Checked in! Welcome to HTF4 🎉')
-          fetchProfile(user.id)
+        (payload) => {
+          const row = payload.new
+          setMemberCheckins(prev => [...prev, { id: row.id, team_member_id: row.team_member_id ?? null }])
+          if (!row.team_member_id) {
+            setCheckedIn(true)
+            toast.success('Checked in! Welcome to HTF4 🎉')
+            fetchProfile(user.id)
+          } else {
+            toast.success('A teammate just checked in')
+          }
         }
       )
       .subscribe()
@@ -57,6 +100,22 @@ export default function CheckInScreen() {
   useEffect(() => {
     if (profile?.checked_in) setCheckedIn(true)
   }, [profile?.checked_in])
+
+  // Has the selected member been checked in individually?
+  const [myMemberCheckedIn, setMyMemberCheckedIn] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      if (!selectedName || !user) { setMyMemberCheckedIn(false); return }
+      const { data: mems } = await supabase
+        .from('team_members').select('id, full_name, checked_in').eq('team_id', user.id)
+      if (cancelled) return
+      const target = normalizeName(selectedName)
+      const me = (mems ?? []).find(m => normalizeName(m.full_name) === target)
+      setMyMemberCheckedIn(!!me?.checked_in)
+    }
+    run()
+  }, [selectedName, user, memberCheckins])
 
   async function copy(value, kind) {
     try {
@@ -70,8 +129,11 @@ export default function CheckInScreen() {
 
   const INFO = [
     { label: 'Team', value: profile?.team_name },
-    { label: 'Code', value: profile?.team_code, mono: true },
+    { label: 'Code', value: teamCode, mono: true },
+    ...(selectedName ? [{ label: 'You', value: selectedName }] : []),
   ]
+
+  const showCheckedIn = selectedName ? myMemberCheckedIn : checkedIn
 
   return (
     <div className="px-4 sm:px-6 pt-6 pb-6 flex flex-col gap-4 sm:gap-6">
@@ -86,10 +148,50 @@ export default function CheckInScreen() {
         <div>
           <h1 className="font-headline font-black text-2xl uppercase italic leading-none text-white">Check-in QR</h1>
           <p className="font-body font-bold text-xs text-on-surface-variant text-white">
-            {checkedIn ? 'You are checked in — details below' : 'Show this to a volunteer at the entrance'}
+            {showCheckedIn ? 'You are checked in — details below' : 'Show this to a volunteer at the entrance'}
           </p>
         </div>
       </div>
+
+      {/* Member picker */}
+      {roster.length > 0 && (
+        <div className="bg-surface border-4 border-black rounded-3xl overflow-hidden">
+          <div className="bg-tertiary-container px-4 py-3 border-b-4 border-black flex items-center justify-between">
+            <p className="font-headline font-black text-base uppercase italic text-on-tertiary-container">
+              Who Are You?
+            </p>
+            {selectedName && (
+              <button
+                onClick={clearMember}
+                className="font-headline font-black text-[10px] uppercase italic bg-white border-2 border-black px-2 py-0.5 rounded-lg active:scale-95"
+              >
+                Change
+              </button>
+            )}
+          </div>
+          {!selectedName ? (
+            <ul>
+              {roster.map((name, i) => (
+                <li key={name} className={i < roster.length - 1 ? 'border-b-4 border-black' : ''}>
+                  <button
+                    onClick={() => chooseMember(name)}
+                    className="w-full text-left px-4 py-3 font-body font-bold text-on-surface active:bg-surface-container"
+                  >
+                    {name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="px-4 py-3">
+              <p className="font-body font-bold text-sm text-on-surface">
+                <span className="text-outline">Generating a QR for </span>
+                <span className="text-black">{selectedName}</span>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* QR */}
       <div className="bg-surface border-4 border-black p-5 drop-block rounded-3xl flex flex-col items-center gap-3">
@@ -97,7 +199,11 @@ export default function CheckInScreen() {
           <QRCodeSVG value={qrPayload} size={240} bgColor="#fddc00" fgColor="#383833" level="M" className="sm:!w-72 sm:!h-72" />
         </div>
         <p className="font-body font-bold text-xs text-on-surface-variant text-center">
-          A volunteer will scan this to check you in
+          {selectedName
+            ? 'This QR is unique to you — matches your NFC sticker'
+            : roster.length > 0
+              ? 'Pick your name above to get a personal QR'
+              : 'A volunteer will scan this to check you in'}
         </p>
       </div>
 
@@ -119,7 +225,7 @@ export default function CheckInScreen() {
       </div>
 
       {/* Status + Wi-Fi reveal */}
-      {checkedIn ? (
+      {showCheckedIn ? (
         <>
           <div className="bg-primary-container border-4 border-black py-5 px-6 rounded-2xl drop-block text-center">
             <p className="font-headline font-black text-2xl uppercase italic text-on-primary-container">✓ You&apos;re In!</p>

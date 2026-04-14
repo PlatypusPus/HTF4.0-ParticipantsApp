@@ -2,31 +2,10 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useToast } from '../../contexts/ToastContext'
 import LoadingSpinner from '../../components/ui/LoadingSpinner'
-
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+import { parsePayload, normalizeName } from '../../lib/nfcPayload'
 
 function detectorSupported() {
   return typeof window !== 'undefined' && 'BarcodeDetector' in window
-}
-
-function extractUuid(raw) {
-  if (!raw) return null
-  try {
-    const obj = JSON.parse(raw)
-    if (obj?.uid && UUID_RE.test(obj.uid)) return obj.uid.match(UUID_RE)[0]
-    if (obj?.member && UUID_RE.test(obj.member)) return obj.member.match(UUID_RE)[0]
-  } catch { /* not json */ }
-  const m = String(raw).match(UUID_RE)
-  return m ? m[0] : null
-}
-
-function extractCode(raw) {
-  if (!raw) return null
-  try {
-    const obj = JSON.parse(raw)
-    if (typeof obj?.code === 'string') return obj.code.toUpperCase()
-  } catch { /* not json */ }
-  return null
 }
 
 export default function CheckinMonitorScreen() {
@@ -120,7 +99,7 @@ export default function CheckinMonitorScreen() {
   }, [teams, members, checkins, search])
 
   // ─── Core: confirm check-in ────────────────────────────────────────────────
-  const confirmCheckin = useCallback(async ({ uid, code }) => {
+  const confirmCheckin = useCallback(async ({ uid, code, name }) => {
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
@@ -146,6 +125,15 @@ export default function CheckinMonitorScreen() {
         const { data: prof } = await supabase
           .from('profiles').select('id, team_code, team_name').eq('team_code', code).maybeSingle()
         if (prof) team = prof
+      }
+
+      // Resolve a named member within the team (participant stickers/QRs)
+      if (team && !member && name) {
+        const target = normalizeName(name)
+        const { data: mems } = await supabase
+          .from('team_members').select('id, team_id, full_name').eq('team_id', team.id)
+        const hit = (mems ?? []).find(m => normalizeName(m.full_name) === target)
+        if (hit) member = { ...hit, team }
       }
 
       if (!team) {
@@ -233,10 +221,12 @@ export default function CheckinMonitorScreen() {
             const codes = await detectorRef.current.detect(videoRef.current)
             if (codes?.[0]?.rawValue) {
               const raw = codes[0].rawValue
-              const uid = extractUuid(raw)
-              const code = extractCode(raw)
-              if (uid || code) await confirmCheckin({ uid, code })
-              else toast.error('Unrecognised QR')
+              const parsed = parsePayload(raw)
+              if (parsed.uuid || parsed.teamCode || parsed.name) {
+                await confirmCheckin({ uid: parsed.uuid, code: parsed.teamCode, name: parsed.name })
+              } else {
+                toast.error('Unrecognised QR')
+              }
             }
           } catch { /* frame error */ }
           rafRef.current = requestAnimationFrame(tick)
@@ -254,9 +244,12 @@ export default function CheckinMonitorScreen() {
     e.preventDefault()
     const raw = manualCode.trim()
     if (!raw) return
-    const uid = extractUuid(raw)
-    const code = uid ? null : raw.toUpperCase()
-    await confirmCheckin({ uid, code })
+    const parsed = parsePayload(raw)
+    if (parsed.uuid || parsed.teamCode || parsed.name) {
+      await confirmCheckin({ uid: parsed.uuid, code: parsed.teamCode, name: parsed.name })
+    } else {
+      await confirmCheckin({ uid: null, code: raw.toUpperCase(), name: null })
+    }
     setManualCode('')
   }
 

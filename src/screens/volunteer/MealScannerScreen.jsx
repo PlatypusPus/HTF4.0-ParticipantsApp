@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import LoadingSpinner from '../../components/ui/LoadingSpinner'
+import { parsePayload, normalizeName } from '../../lib/nfcPayload'
 
 const MEAL_TYPES = [
   { key: 'breakfast', label: 'Breakfast', icon: '🥐' },
@@ -11,19 +12,12 @@ const MEAL_TYPES = [
 ]
 
 const MAX_PER_MEAL_TYPE = 2
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
 function pickDefaultMeal() {
   const h = new Date().getHours()
   if (h < 11)  return 'breakfast'
   if (h < 16)  return 'lunch'
   return 'dinner'
-}
-
-function extractId(text) {
-  if (!text) return null
-  const m = String(text).match(UUID_RE)
-  return m ? m[0] : null
 }
 
 async function readNDEF(record) {
@@ -130,24 +124,45 @@ export default function MealScannerScreen() {
   }, [teams, members, records, meal])
 
   // ── Core flow: identify participant/member and record meal ──────────────
-  const recordMeal = useCallback(async (id, mealType) => {
-    if (!id) { toast.error('No ID on tag'); return }
+  // tag = { uuid, teamCode, name } — any/all may be present
+  const recordMeal = useCallback(async (tag, mealType) => {
+    const { uuid, teamCode, name } = tag ?? {}
+    if (!uuid && !teamCode) { toast.error('No ID on tag'); return }
     setBusy(true)
     try {
-      // Resolve id: team_member first, then profile
       let member = null
       let team = null
 
-      const { data: mem } = await supabase
-        .from('team_members')
-        .select('id, team_id, full_name, team:profiles!team_id(id, team_code, team_name)')
-        .eq('id', id).maybeSingle()
-      if (mem) { member = mem; team = mem.team }
+      // 1) UUID path (organizer stickers / legacy)
+      if (uuid) {
+        const { data: mem } = await supabase
+          .from('team_members')
+          .select('id, team_id, full_name, team:profiles!team_id(id, team_code, team_name)')
+          .eq('id', uuid).maybeSingle()
+        if (mem) { member = mem; team = mem.team }
 
-      if (!team) {
+        if (!team) {
+          const { data: prof } = await supabase
+            .from('profiles').select('id, team_code, team_name').eq('id', uuid).maybeSingle()
+          if (prof) team = prof
+        }
+      }
+
+      // 2) team_code path (participant NFC stickers: htf4:team=CODE;name=NAME)
+      if (!team && teamCode) {
         const { data: prof } = await supabase
-          .from('profiles').select('id, team_code, team_name').eq('id', id).maybeSingle()
+          .from('profiles').select('id, team_code, team_name')
+          .eq('team_code', teamCode).maybeSingle()
         if (prof) team = prof
+      }
+
+      // 3) Resolve member by name within the team, if we have a name
+      if (team && !member && name) {
+        const target = normalizeName(name)
+        const { data: mems } = await supabase
+          .from('team_members').select('id, team_id, full_name').eq('team_id', team.id)
+        const hit = (mems ?? []).find(m => normalizeName(m.full_name) === target)
+        if (hit) member = { ...hit, team }
       }
 
       if (!team) {
@@ -214,8 +229,11 @@ export default function MealScannerScreen() {
       reader.onreading = async (ev) => {
         for (const rec of ev.message.records) {
           const text = await readNDEF(rec)
-          const id = extractId(text)
-          if (id) { await recordMeal(id, meal); return }
+          const parsed = parsePayload(text)
+          if (parsed.uuid || parsed.teamCode) {
+            await recordMeal(parsed, meal)
+            return
+          }
         }
         toast.error('Tag has no valid ID')
       }
@@ -239,18 +257,15 @@ export default function MealScannerScreen() {
     const raw = manualCode.trim()
     if (!raw) return
 
-    const uid = extractId(raw)
-    if (uid) { await recordMeal(uid, meal); setManualCode(''); return }
+    const parsed = parsePayload(raw)
+    if (parsed.uuid || parsed.teamCode) {
+      await recordMeal(parsed, meal)
+      setManualCode('')
+      return
+    }
 
-    // Team code lookup → treats as team-level serve (no member resolution)
-    setBusy(true)
-    const { data: prof } = await supabase
-      .from('profiles').select('id, team_code, team_name')
-      .eq('team_code', raw.toUpperCase()).maybeSingle()
-    setBusy(false)
-
-    if (!prof) { toast.error(`No team with code "${raw}"`); return }
-    await recordMeal(prof.id, meal)
+    // Treat plain input as a team code
+    await recordMeal({ uuid: null, teamCode: raw.toUpperCase(), name: null }, meal)
     setManualCode('')
   }
 
@@ -258,11 +273,11 @@ export default function MealScannerScreen() {
     if (!nfcSupported) { toast.error('Web NFC not supported'); return }
     const raw = manualCode.trim()
     if (!raw) { toast.error('Enter a UUID first'); return }
-    const id = extractId(raw)
-    if (!id) { toast.error('Enter a valid UUID'); return }
+    const parsed = parsePayload(raw)
+    if (!parsed.uuid) { toast.error('Enter a valid UUID'); return }
     try {
       const writer = new window.NDEFReader()
-      await writer.write({ records: [{ recordType: 'text', data: `htf4:${id}` }] })
+      await writer.write({ records: [{ recordType: 'text', data: `htf4:${parsed.uuid}` }] })
       toast.success('Tag written — tap the blank sticker now')
     } catch (e) {
       toast.error(e?.message ?? 'Write failed')

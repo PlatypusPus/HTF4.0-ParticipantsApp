@@ -10,7 +10,10 @@
       "Bash(npx vite:*)",
       "Bash(ls -la .env* .dockerignore Dockerfile docker-compose*)",
       "Bash(docker --version)",
-      "Bash(docker build:*)"
+      "Bash(docker build:*)",
+      "Bash(node -e \"const { NFC_TEAMS } = require\\('./src/data/nfcTeams.js'\\); console.log\\(NFC_TEAMS.length\\)\")",
+      "Bash(node --input-type=module -e ':*)",
+      "Read(//tmp/**)"
     ]
   }
 }
