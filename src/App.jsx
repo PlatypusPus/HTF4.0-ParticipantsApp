@@ -19,6 +19,7 @@ import SpotifyCallbackScreen from './screens/volunteer/SpotifyCallbackScreen'
 import VolunteerDashboard from './screens/volunteer/VolunteerDashboard'
 import MealScannerScreen from './screens/volunteer/MealScannerScreen'
 import NfcWriteScreen from './screens/volunteer/NfcWriteScreen'
+import OrgNfcWriteScreen from './screens/volunteer/OrgNfcWriteScreen'
 import QueueControlScreen from './screens/volunteer/QueueControlScreen'
 import HelpRequestsScreen from './screens/volunteer/HelpRequestsScreen'
 import CheckinMonitorScreen from './screens/volunteer/CheckinMonitorScreen'
@@ -105,6 +106,7 @@ function AppRoutes() {
         <Route index            element={<VolunteerDashboard />} />
         <Route path="meals"     element={<MealScannerScreen />} />
         <Route path="nfc-write" element={<NfcWriteScreen />} />
+        <Route path="nfc-org"   element={<OrgNfcWriteScreen />} />
         <Route path="queue"     element={<QueueControlScreen />} />
         <Route path="help"      element={<HelpRequestsScreen />} />
         <Route path="checkins"  element={<CheckinMonitorScreen />} />

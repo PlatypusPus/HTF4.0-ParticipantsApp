@@ -6,6 +6,7 @@ const TABS = [
   { to: '/volunteer',          label: 'Overview',  icon: '⬡', end: true },
   { to: '/volunteer/meals',    label: 'Meals',     icon: '🍽' },
   { to: '/volunteer/nfc-write', label: 'NFC Write', icon: '✎' },
+  { to: '/volunteer/nfc-org',   label: 'Org NFC',   icon: '★' },
   { to: '/volunteer/checkins', label: 'Check-ins', icon: '✓' },
   { to: '/volunteer/queue',    label: 'Queue',     icon: '♫' },
   { to: '/volunteer/help',     label: 'Help',      icon: '!' },
