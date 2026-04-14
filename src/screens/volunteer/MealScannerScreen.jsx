@@ -201,7 +201,8 @@ export default function MealScannerScreen() {
           setLookup({ team, member, alreadyServed: true })
           toast.error('Already served')
         } else {
-          toast.error('Failed to record meal')
+          console.error('meal_records insert failed', error)
+          toast.error(`Failed: ${error.message ?? error.code ?? 'unknown error'}`)
         }
         return
       }
