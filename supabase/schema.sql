@@ -127,7 +127,16 @@ language plpgsql
 as $$
 declare
   existing_count int;
+  lock_key_a bigint;
+  lock_key_b bigint;
 begin
+  -- Transaction-scoped advisory lock keyed by (subject, meal_type). Two
+  -- volunteers scanning the same person at the same instant will serialize
+  -- here so the count/insert is race-free.
+  lock_key_a := ('x' || substr(md5(coalesce(new.team_member_id::text, new.user_id::text)), 1, 16))::bit(64)::bigint;
+  lock_key_b := ('x' || substr(md5(new.meal_type), 1, 16))::bit(64)::bigint;
+  perform pg_advisory_xact_lock(lock_key_a, lock_key_b);
+
   if new.team_member_id is not null then
     select count(*) into existing_count
     from public.meal_records

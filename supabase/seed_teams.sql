@@ -10,7 +10,7 @@
 -- =============================================================
 
 -- Devops track (D01–D10)
-select public.seed_team_auth('D01', 'The Mob glitch',  'participant', 'THEMD01');
+select public.seed_team_auth('D01', 'The Mob glitch',  'participant', ' ');
 select public.seed_team_auth('D02', 'Devil''s Den',    'participant', 'DEVILD02');
 select public.seed_team_auth('D03', 'The_Quad',        'participant', 'THEQD03');
 select public.seed_team_auth('D04', 'Elite Hackers',   'participant', 'ELITD04');

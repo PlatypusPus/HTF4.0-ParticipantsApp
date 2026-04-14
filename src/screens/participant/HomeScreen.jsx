@@ -34,10 +34,10 @@ export default function HomeScreen() {
   const navigate = useNavigate()
 
   return (
-    <div className="px-4 pt-6 pb-6 flex flex-col gap-4">
+    <div className="px-4 sm:px-6 pt-6 pb-6 flex flex-col gap-4 sm:gap-6">
       {/* Top bar */}
       <div className="flex items-center justify-between">
-        <img src={logo} alt="HTF4" className="h-9 w-auto" />
+        <img src={logo} alt="HTF4" className="h-9 sm:h-12 w-auto" />
         <div className="flex gap-2">
           {isVolunteer && (
             <button
@@ -87,12 +87,12 @@ export default function HomeScreen() {
       </div>
 
       {/* Option cards */}
-      <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {OPTIONS.map(opt => (
           <button
             key={opt.to}
             onClick={() => navigate(opt.to)}
-            className={`relative hover:z-10 ${opt.bg} ${opt.text} border-4 border-black p-5 drop-block rounded-3xl text-left hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all active:scale-95 flex items-center gap-4`}
+            className={`relative hover:z-10 ${opt.bg} ${opt.text} border-4 border-black p-5 drop-block rounded-3xl text-left hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all active:scale-95 flex items-center gap-4 sm:flex-col sm:items-start sm:gap-3 sm:min-h-[160px]`}
           >
             <span className="text-4xl leading-none flex-shrink-0">{opt.icon}</span>
             <div className="min-w-0">

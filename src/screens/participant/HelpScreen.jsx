@@ -89,12 +89,12 @@ export default function HelpScreen() {
   }
 
   return (
-    <div className="px-4 pt-6 pb-6 flex flex-col gap-4">
+    <div className="px-4 sm:px-6 pt-6 pb-6 flex flex-col gap-4 sm:gap-6">
       <div>
         <h1 className="font-headline font-black text-2xl uppercase italic text-white">Get Help</h1>
       </div>
 
-      <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         {HELP_TYPES.map(type => (
           <button
             key={type.id}

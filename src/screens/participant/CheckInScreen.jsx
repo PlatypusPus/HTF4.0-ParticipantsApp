@@ -74,7 +74,7 @@ export default function CheckInScreen() {
   ]
 
   return (
-    <div className="px-4 pt-6 pb-6 flex flex-col gap-4">
+    <div className="px-4 sm:px-6 pt-6 pb-6 flex flex-col gap-4 sm:gap-6">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button
@@ -94,7 +94,7 @@ export default function CheckInScreen() {
       {/* QR */}
       <div className="bg-surface border-4 border-black p-5 drop-block rounded-3xl flex flex-col items-center gap-3">
         <div className="bg-primary-container border-4 border-black p-3 rounded-2xl">
-          <QRCodeSVG value={qrPayload} size={200} bgColor="#fddc00" fgColor="#383833" level="M" />
+          <QRCodeSVG value={qrPayload} size={240} bgColor="#fddc00" fgColor="#383833" level="M" className="sm:!w-72 sm:!h-72" />
         </div>
         <p className="font-body font-bold text-xs text-on-surface-variant text-center">
           A volunteer will scan this to check you in
