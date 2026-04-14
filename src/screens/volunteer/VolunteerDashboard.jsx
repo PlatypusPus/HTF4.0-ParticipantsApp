@@ -68,11 +68,8 @@ export default function VolunteerDashboard() {
       <div className="bg-surface border-4 border-black p-5 drop-block rounded-3xl">
         <h2 className="font-headline font-black text-lg uppercase italic mb-2 text-black">Quick Notes</h2>
         <ul className="font-body font-bold text-sm text-on-surface-variant space-y-1">
-          <li>• Use the <span className="text-on-surface">Meals</span> tab to scan NFC wristbands for breakfast, lunch, and dinner</li>
-          <li>• Use the <span className="text-on-surface">Queue</span> tab to control playback</li>
           <li>• <span className="text-error">Red</span> stat cards require immediate attention</li>
-          <li>• All counts update in real-time across every logged-in volunteer</li>
-          <li>• Set a team&apos;s <code className="bg-surface-container px-1 rounded">role = volunteer</code> in the profiles table to grant access</li>
+          <li>• Counts update in real-time across every logged-in volunteer</li>
         </ul>
       </div>
     </div>

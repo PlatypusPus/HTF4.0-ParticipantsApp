@@ -39,6 +39,14 @@ create policy "profiles: admin update all"
   on public.profiles for update
   using (public.my_role() = 'admin');
 
+create policy "profiles: volunteer read all"
+  on public.profiles for select
+  using (public.my_role() in ('admin', 'volunteer'));
+
+create policy "profiles: volunteer mark checked_in"
+  on public.profiles for update
+  using (public.my_role() in ('admin', 'volunteer'));
+
 -- =============================================================
 -- CHECK-INS
 -- =============================================================
@@ -55,6 +63,10 @@ create policy "checkins: own read"
 create policy "checkins: volunteer/admin read all"
   on public.checkins for select
   using (public.my_role() in ('admin', 'volunteer'));
+
+create policy "checkins: volunteer/admin insert"
+  on public.checkins for insert
+  with check (public.my_role() in ('admin', 'volunteer'));
 
 -- =============================================================
 -- SONG QUEUE

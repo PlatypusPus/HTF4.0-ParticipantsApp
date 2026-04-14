@@ -10,6 +10,9 @@ const MEAL_TYPES = [
   { key: 'dinner',    label: 'Dinner',    icon: '🍽' },
 ]
 
+// Each participant can have each meal type this many times over the whole event
+const MAX_PER_MEAL_TYPE = 2
+
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -124,18 +127,16 @@ export default function MealScannerScreen() {
         return
       }
 
-      // 2. Check if already served today
-      const { data: existing } = await supabase
+      // 2. Count how many times this participant has had this meal type across the event
+      const { count: servedCount } = await supabase
         .from('meal_records')
-        .select('id, served_at')
+        .select('id', { count: 'exact', head: true })
         .eq('user_id', profileId)
         .eq('meal_type', mealType)
-        .eq('meal_date', todayISO())
-        .maybeSingle()
 
-      if (existing) {
-        setLookup({ profile, alreadyServed: existing })
-        toast.error(`${profile.full_name} already had ${mealType} today`)
+      if ((servedCount ?? 0) >= MAX_PER_MEAL_TYPE) {
+        setLookup({ profile, alreadyServed: true, servedCount })
+        toast.error(`${profile.full_name ?? 'Participant'} already had ${mealType} ${MAX_PER_MEAL_TYPE}×`)
         return
       }
 
@@ -149,7 +150,7 @@ export default function MealScannerScreen() {
       if (insErr) {
         // Unique constraint race — treat as already served
         if (insErr.code === '23505') {
-          toast.error(`${profile.full_name} already had ${mealType} today`)
+          toast.error(`${profile.full_name ?? 'Participant'} already had ${mealType} today`)
           setLookup({ profile, alreadyServed: true })
         } else {
           toast.error('Failed to record meal')
@@ -157,8 +158,8 @@ export default function MealScannerScreen() {
         return
       }
 
-      setLookup({ profile, alreadyServed: null })
-      toast.success(`✓ ${profile.full_name} — ${mealType}`)
+      setLookup({ profile, alreadyServed: null, servedCount: (servedCount ?? 0) + 1 })
+      toast.success(`✓ ${profile.full_name ?? 'Participant'} — ${mealType} (${(servedCount ?? 0) + 1}/${MAX_PER_MEAL_TYPE})`)
       // Haptic feedback on mobile
       if (navigator.vibrate) navigator.vibrate(80)
     } finally {
@@ -361,8 +362,8 @@ export default function MealScannerScreen() {
               <p className="font-body font-bold text-sm opacity-80">
                 {lookup.profile.team_code ? `Team ${lookup.profile.team_code} · ` : ''}
                 {lookup.alreadyServed
-                  ? `Already had ${meal} today`
-                  : `${meal} served ✓`}
+                  ? `Max ${MAX_PER_MEAL_TYPE}× ${meal} reached`
+                  : `${meal} served ✓ (${lookup.servedCount ?? 1}/${MAX_PER_MEAL_TYPE})`}
               </p>
             </div>
           </div>

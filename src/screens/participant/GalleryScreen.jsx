@@ -23,7 +23,8 @@ export default function GalleryScreen() {
       .channel('gallery_rt')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'media_items' }, loadMedia)
       .subscribe()
-    return () => supabase.removeChannel(ch)
+    const poll = setInterval(loadMedia, 15000)
+    return () => { supabase.removeChannel(ch); clearInterval(poll) }
   }, [])
 
   async function loadMedia() {
@@ -31,6 +32,7 @@ export default function GalleryScreen() {
       .from('media_items')
       .select('*, profiles(team_name)')
       .eq('is_approved', true)
+      .eq('is_flagged', false)
       .order('uploaded_at', { ascending: false })
     if (data) setItems(data)
     setLoading(false)
@@ -57,13 +59,20 @@ export default function GalleryScreen() {
         onProgress: (p) => setProgress(Math.max(1, Math.min(95, p))),
       })
 
-      const { error: dbErr } = await supabase.from('media_items').insert({
+      const { data: inserted, error: dbErr } = await supabase.from('media_items').insert({
         uploaded_by:  user.id,
-        storage_path: publicId,  // reused column — holds the Cloudinary public_id for later deletion
+        storage_path: publicId,
         public_url:   publicUrl,
         media_type:   mediaType,
-      })
+        is_approved:  true,
+        is_flagged:   false,
+      }).select('*, profiles(team_name)').single()
       if (dbErr) throw dbErr
+
+      if (inserted) {
+        setItems(prev => (prev.some(i => i.id === inserted.id) ? prev : [inserted, ...prev]))
+      }
+      await loadMedia()
 
       setProgress(100)
       toast.success('Photo shared!')

@@ -12,7 +12,7 @@ create extension if not exists "pgcrypto";
 -- Each team is a single Supabase Auth user with email
 -- {team_code}@htf.local and a pre-shared password.
 -- =============================================================
-create table public.profiles (
+create table if not exists public.profiles (
   id            uuid references auth.users on delete cascade primary key,
   team_code     text unique not null,
   team_name     text not null,
@@ -28,7 +28,7 @@ comment on table public.profiles is 'One row per team/volunteer. Role controls R
 -- =============================================================
 -- CHECK-INS
 -- =============================================================
-create table public.checkins (
+create table if not exists public.checkins (
   id             uuid primary key default gen_random_uuid(),
   user_id        uuid references public.profiles(id) on delete cascade not null unique,
   checked_in_at  timestamptz not null default now(),
@@ -41,7 +41,7 @@ comment on column public.checkins.user_id is 'UNIQUE constraint prevents duplica
 -- =============================================================
 -- SONG QUEUE
 -- =============================================================
-create table public.song_queue (
+create table if not exists public.song_queue (
   id                uuid primary key default gen_random_uuid(),
   spotify_track_id  text not null,
   track_name        text not null,
@@ -56,12 +56,12 @@ create table public.song_queue (
   is_played         boolean not null default false
 );
 
-create index on public.song_queue (is_played, position);
+create index if not exists song_queue_played_position_idx on public.song_queue (is_played, position);
 
 -- =============================================================
 -- MEDIA GALLERY
 -- =============================================================
-create table public.media_items (
+create table if not exists public.media_items (
   id            uuid primary key default gen_random_uuid(),
   uploaded_by   uuid references public.profiles(id) on delete set null,
   storage_path  text not null,
@@ -75,13 +75,13 @@ create table public.media_items (
   uploaded_at   timestamptz not null default now()
 );
 
-create index on public.media_items (is_approved, uploaded_at desc);
-create index on public.media_items (is_flagged) where is_flagged = true;
+create index if not exists media_items_approved_uploaded_idx on public.media_items (is_approved, uploaded_at desc);
+create index if not exists media_items_flagged_idx on public.media_items (is_flagged) where is_flagged = true;
 
 -- =============================================================
 -- HELP REQUESTS
 -- =============================================================
-create table public.help_requests (
+create table if not exists public.help_requests (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid references public.profiles(id) on delete cascade not null,
   help_type    text not null check (help_type in ('medical', 'technical', 'general')),
@@ -95,15 +95,26 @@ create table public.help_requests (
   resolved_at  timestamptz
 );
 
-create index on public.help_requests (status, created_at desc);
+create index if not exists help_requests_status_created_idx on public.help_requests (status, created_at desc);
 
 -- =============================================================
 -- REALTIME PUBLICATIONS
 -- =============================================================
-alter publication supabase_realtime add table public.song_queue;
-alter publication supabase_realtime add table public.help_requests;
-alter publication supabase_realtime add table public.media_items;
-alter publication supabase_realtime add table public.checkins;
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='song_queue') then
+    alter publication supabase_realtime add table public.song_queue;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='help_requests') then
+    alter publication supabase_realtime add table public.help_requests;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='media_items') then
+    alter publication supabase_realtime add table public.media_items;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='checkins') then
+    alter publication supabase_realtime add table public.checkins;
+  end if;
+end$$;
 
 -- =============================================================
 -- NOTE: No auto-create trigger. Teams are pre-seeded via the

@@ -34,7 +34,17 @@ export default function SongQueueScreen() {
       .channel('queue_rt')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'song_queue' }, loadQueue)
       .subscribe()
-    return () => supabase.removeChannel(ch)
+    const poll = setInterval(loadQueue, 5000)
+    const onFocus = () => loadQueue()
+    const onVisible = () => { if (document.visibilityState === 'visible') loadQueue() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      supabase.removeChannel(ch)
+      clearInterval(poll)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   async function loadQueue() {
@@ -102,7 +112,15 @@ export default function SongQueueScreen() {
 
   return (
     <div className="px-4 pt-6 pb-6 flex flex-col gap-4">
-      <h1 className="font-headline font-black text-2xl uppercase italic text-white">Song Queue</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="font-headline font-black text-2xl uppercase italic text-white">Song Queue</h1>
+        <button
+          onClick={loadQueue}
+          className="bg-surface border-2 border-black px-3 py-1.5 font-headline font-black text-xs uppercase italic rounded-xl active:scale-95"
+        >
+          ↻
+        </button>
+      </div>
 
       {/* Now Playing */}
       <div className={`border-4 border-black p-4 drop-block rounded-3xl flex items-center gap-3 ${nowPlaying ? 'bg-primary-container' : 'bg-surface-container'}`}>

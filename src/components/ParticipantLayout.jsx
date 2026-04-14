@@ -2,10 +2,10 @@ import { Outlet } from 'react-router-dom'
 import { NavLink } from 'react-router-dom'
 
 const TABS = [
-  { to: '/home',    label: 'Home',  icon: '⬡' },
-  { to: '/queue',   label: 'Queue', icon: '♫' },
-  { to: '/gallery', label: 'Media', icon: '' },
-  { to: '/help',    label: 'Help',  icon: '!'  },
+  { to: '/home',    label: 'Home' },
+  { to: '/queue',   label: 'Queue' },
+  { to: '/gallery', label: 'Media' },
+  { to: '/help',    label: 'Help' },
 ]
 
 export default function ParticipantLayout() {
@@ -34,15 +34,14 @@ export default function ParticipantLayout() {
                 key={tab.to}
                 to={tab.to}
                 className={({ isActive }) =>
-                  `flex flex-col items-center py-3 gap-0.5 transition-colors ${
+                  `flex items-center justify-center py-4 transition-colors ${
                     isActive
                       ? 'bg-primary-container text-on-primary-container'
-                      : 'text-on-surface-variant hover:bg-surface-container'
+                      : 'text-on-surface hover:bg-surface-container'
                   }`
                 }
               >
-                <span className="text-2xl leading-none">{tab.icon}</span>
-                <span className="font-label font-bold text-[10px] uppercase tracking-widest">{tab.label}</span>
+                <span className="font-headline font-black text-sm uppercase italic tracking-widest">{tab.label}</span>
               </NavLink>
             ))}
           </div>
