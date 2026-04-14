@@ -1,16 +1,15 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Example nginx site config for the HTF4 Volunteer App
+# Host nginx site config for the HTF4 Volunteer App
 #
 # Place this at:  /etc/nginx/sites-available/htf4-volunteer.conf
 # Enable with:    sudo ln -s /etc/nginx/sites-available/htf4-volunteer.conf \
 #                            /etc/nginx/sites-enabled/
 # Reload nginx:   sudo nginx -t && sudo systemctl reload nginx
 #
-# TLS certs are assumed to be managed by certbot. If you haven't issued one:
-#   sudo certbot --nginx -d htf4.yourdomain.com
-# certbot will inject the ssl_certificate lines automatically. Replace the
-# two REPLACE_ME lines below with the paths certbot shows, or run certbot
-# AFTER this file is installed and it will edit it for you.
+# TLS is managed by certbot. Issue/renew with:
+#   sudo certbot --nginx -d participant.hacktofuture.in
+# certbot will inject the ssl_certificate lines automatically (or edit the
+# REPLACE_ME lines below if you manage certs manually).
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Redirect HTTP → HTTPS (certbot inserts this block itself; include only if
@@ -18,7 +17,7 @@
 server {
     listen      80;
     listen [::]:80;
-    server_name htf4.yourdomain.com;
+    server_name participant.hacktofuture.in;
 
     # ACME HTTP-01 challenges (certbot webroot). Safe to keep.
     location /.well-known/acme-challenge/ {
@@ -33,11 +32,11 @@ server {
 server {
     listen      443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name htf4.yourdomain.com;
+    server_name participant.hacktofuture.in;
 
     # ─── TLS ─────────────────────────────────────────────────────────────────
-    ssl_certificate     /etc/letsencrypt/live/htf4.yourdomain.com/fullchain.pem; # REPLACE_ME
-    ssl_certificate_key /etc/letsencrypt/live/htf4.yourdomain.com/privkey.pem;   # REPLACE_ME
+    ssl_certificate     /etc/letsencrypt/live/participant.hacktofuture.in/fullchain.pem; # REPLACE_ME
+    ssl_certificate_key /etc/letsencrypt/live/participant.hacktofuture.in/privkey.pem;   # REPLACE_ME
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
@@ -49,11 +48,11 @@ server {
     add_header X-Content-Type-Options    "nosniff"                             always;
     add_header Referrer-Policy           "strict-origin-when-cross-origin"     always;
 
-    # ─── Reverse proxy → Docker container on 127.0.0.1:8080 ──────────────────
+    # ─── Reverse proxy → Docker container on 127.0.0.1:8090 ──────────────────
     # Container already runs its own nginx with SPA fallback, gzip, and asset
     # caching (see docker/nginx.conf), so this block just forwards.
     location / {
-        proxy_pass         http://127.0.0.1:8080;
+        proxy_pass         http://127.0.0.1:8090;
         proxy_http_version 1.1;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;

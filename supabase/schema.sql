@@ -8,6 +8,21 @@ create extension if not exists "uuid-ossp";
 create extension if not exists "pgcrypto";
 
 -- =============================================================
+-- GRANTS — Supabase's PostgREST uses the `anon` and `authenticated`
+-- roles. New tables need explicit GRANTs; otherwise the REST API
+-- returns 403 "permission denied for table" even when RLS would pass.
+-- Default privileges ensure any future table inherits the same grants.
+-- =============================================================
+grant usage on schema public to anon, authenticated, service_role;
+
+alter default privileges in schema public
+  grant all on tables    to anon, authenticated, service_role;
+alter default privileges in schema public
+  grant all on sequences to anon, authenticated, service_role;
+alter default privileges in schema public
+  grant all on functions to anon, authenticated, service_role;
+
+-- =============================================================
 -- PROFILES — one row per team/volunteer/admin. Auth users are
 -- pre-seeded with email {team_code}@htf.local.
 -- =============================================================
@@ -127,15 +142,16 @@ language plpgsql
 as $$
 declare
   existing_count int;
-  lock_key_a bigint;
-  lock_key_b bigint;
+  lock_key bigint;
 begin
   -- Transaction-scoped advisory lock keyed by (subject, meal_type). Two
   -- volunteers scanning the same person at the same instant will serialize
   -- here so the count/insert is race-free.
-  lock_key_a := ('x' || substr(md5(coalesce(new.team_member_id::text, new.user_id::text)), 1, 16))::bit(64)::bigint;
-  lock_key_b := ('x' || substr(md5(new.meal_type), 1, 16))::bit(64)::bigint;
-  perform pg_advisory_xact_lock(lock_key_a, lock_key_b);
+  lock_key := hashtextextended(
+    coalesce(new.team_member_id::text, new.user_id::text) || '|' || new.meal_type,
+    0
+  );
+  perform pg_advisory_xact_lock(lock_key);
 
   if new.team_member_id is not null then
     select count(*) into existing_count
@@ -190,3 +206,12 @@ alter table public.help_requests replica identity full;
 alter table public.checkins      replica identity full;
 alter table public.meal_records  replica identity full;
 alter table public.team_members  replica identity full;
+
+-- =============================================================
+-- Re-apply grants to the tables created above. `alter default
+-- privileges` only affects objects created AFTER the grant statement
+-- is run, so existing tables need an explicit grant pass too.
+-- =============================================================
+grant all on all tables    in schema public to anon, authenticated, service_role;
+grant all on all sequences in schema public to anon, authenticated, service_role;
+grant all on all functions in schema public to anon, authenticated, service_role;
