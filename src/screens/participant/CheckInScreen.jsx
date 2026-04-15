@@ -7,8 +7,8 @@ import { useToast } from '../../contexts/ToastContext'
 import { NFC_TEAMS } from '../../data/nfcTeams'
 import { buildMemberPayload, normalizeName } from '../../lib/nfcPayload'
 
-const WIFI_SSID = 'changethis'
-const WIFI_PASSWORD = 'changethis'
+const WIFI_SSID = 'HackToFuture4'
+const WIFI_PASSWORD = '4HTF0@Sjec'
 
 function memberStorageKey(teamCode) {
   return `htf4.member.${teamCode || 'unknown'}`
