@@ -110,9 +110,15 @@ export default function CheckinMonitorScreen() {
       if (uid) {
         const { data: mem } = await supabase
           .from('team_members')
-          .select('id, team_id, full_name, team:profiles!team_id(id, team_code, team_name)')
+          .select('id, team_id, full_name')
           .eq('id', uid).maybeSingle()
-        if (mem) { member = mem; team = mem.team }
+        if (mem) {
+          member = mem
+          const { data: prof } = await supabase
+            .from('profiles').select('id, team_code, team_name')
+            .eq('id', mem.team_id).maybeSingle()
+          if (prof) team = prof
+        }
       }
 
       if (!team && uid) {
