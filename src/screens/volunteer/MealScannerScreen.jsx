@@ -127,6 +127,7 @@ export default function MealScannerScreen() {
   // tag = { uuid, teamCode, name } — any/all may be present
   const recordMeal = useCallback(async (tag, mealType) => {
     const { uuid, teamCode, name } = tag ?? {}
+    console.log('[meal] scan tag', { uuid, teamCode, name })
     if (!uuid && !teamCode) { toast.error('No ID on tag'); return }
     setBusy(true)
     try {
@@ -135,22 +136,26 @@ export default function MealScannerScreen() {
 
       // 1) UUID path (organizer stickers / legacy)
       if (uuid) {
-        const { data: mem } = await supabase
+        const memRes = await supabase
           .from('team_members')
           .select('id, team_id, full_name')
           .eq('id', uuid).maybeSingle()
+        console.log('[meal] team_members lookup', { uuid, data: memRes.data, error: memRes.error })
+        const mem = memRes.data
         if (mem) {
           member = mem
-          const { data: prof } = await supabase
+          const profRes = await supabase
             .from('profiles').select('id, team_code, team_name')
             .eq('id', mem.team_id).maybeSingle()
-          if (prof) team = prof
+          console.log('[meal] profile lookup by team_id', { team_id: mem.team_id, data: profRes.data, error: profRes.error })
+          if (profRes.data) team = profRes.data
         }
 
         if (!team) {
-          const { data: prof } = await supabase
+          const profRes = await supabase
             .from('profiles').select('id, team_code, team_name').eq('id', uuid).maybeSingle()
-          if (prof) team = prof
+          console.log('[meal] profile lookup by uuid', { uuid, data: profRes.data, error: profRes.error })
+          if (profRes.data) team = profRes.data
         }
       }
 
@@ -172,7 +177,9 @@ export default function MealScannerScreen() {
       }
 
       if (!team) {
-        toast.error('Not found'); setLookup(null); return
+        console.warn('[meal] Not found — no team resolved', { uuid, teamCode, name, member })
+        toast.error(uuid ? `Not found: ${uuid.slice(0, 8)}…` : 'Not found')
+        setLookup(null); return
       }
 
       // Count how many times already served (per-member if we have one, else per-team)
